@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3, time, os, json
@@ -6,7 +5,9 @@ import sqlite3, time, os, json
 app = Flask(__name__)
 CORS(app)
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+BASE_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "evaluation.db")
 
 def db():
@@ -14,9 +15,22 @@ def db():
     conn.row_factory = sqlite3.Row
     return conn
 
+def table_has_column(conn, table, column):
+    cur = conn.cursor()
+    cur.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    return column in cols
+
+def ensure_column(conn, table, column, coldef):
+    if not table_has_column(conn, table, column):
+        cur = conn.cursor()
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+        conn.commit()
+
 def init_db():
     conn = db()
     cur = conn.cursor()
+    # sessions
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,6 +39,13 @@ def init_db():
             created_at INTEGER
         )
     """)
+    # migrate: add extended participant metadata (safe if already exists)
+    ensure_column(conn, "sessions", "participant_name", "TEXT")
+    ensure_column(conn, "sessions", "participant_age", "TEXT")
+    ensure_column(conn, "sessions", "familiarity", "TEXT")
+    ensure_column(conn, "sessions", "wears_specks", "TEXT")
+
+    # trials
     cur.execute("""
         CREATE TABLE IF NOT EXISTS trials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,6 +69,8 @@ def init_db():
             created_at INTEGER
         )
     """)
+
+    # events
     cur.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +86,8 @@ def init_db():
             is_delete INTEGER
         )
     """)
+
+    # sus
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sus (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,11 +99,24 @@ def init_db():
             created_at INTEGER
         )
     """)
+
+    # feedbacks (new)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS feedbacks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER,
+            participant_id TEXT,
+            feedback TEXT,
+            created_at INTEGER
+        )
+    """)
+
     conn.commit()
     conn.close()
 
 init_db()
 
+# Load Sinhala prompts / models
 with open(os.path.join(DATA_DIR, "prompts_sinhala.json"), "r", encoding="utf-8") as f:
     PROMPTS = json.load(f)
 
@@ -139,16 +177,30 @@ def get_prompts():
 def session_start():
     data = request.get_json(force=True)
     participant_id = data.get("participant_id")
+    participant_name = data.get("participant_name", "")
+    participant_age = data.get("participant_age", "")
+    familiarity = data.get("familiarity", "No")
+    wears_specks = data.get("wears_specks", "No")
     layouts = data.get("layouts", ["eyespeak", "wijesekara", "helakuru"])
     now = int(time.time()*1000)
     conn = db()
     cur = conn.cursor()
-    cur.execute("INSERT INTO sessions (participant_id, layouts_json, created_at) VALUES (?, ?, ?)",
-                (participant_id, json.dumps(layouts, ensure_ascii=False), now))
+    cur.execute("""
+        INSERT INTO sessions (participant_id, participant_name, participant_age, familiarity, wears_specks, layouts_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (participant_id, participant_name, participant_age, familiarity, wears_specks, json.dumps(layouts, ensure_ascii=False), now))
     sid = cur.lastrowid
     conn.commit()
     conn.close()
-    return jsonify({"session_id": sid, "participant_id": participant_id, "layouts": layouts})
+    return jsonify({
+        "session_id": sid,
+        "participant_id": participant_id,
+        "participant_name": participant_name,
+        "participant_age": participant_age,
+        "familiarity": familiarity,
+        "wears_specks": wears_specks,
+        "layouts": layouts
+    })
 
 @app.post("/events/bulk")
 def events_bulk():
@@ -185,7 +237,7 @@ def trial_submit():
     deletes = int(d.get("deletes", 0))
     eye_distance_px = float(d.get("eye_distance_px", 0.0))
 
-    def char_count(s): 
+    def char_count(s):
         return len(s)
     chars = char_count(transcribed_text)
     t_min = max(0.0001, duration_ms / 60000.0)
@@ -252,10 +304,57 @@ def sus_submit():
     cur.execute("""
         INSERT INTO sus (session_id, participant_id, layout_id, items_json, sus_score, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (session_id, participant_id, layout_id, json.dumps(items), sus_score, now))
+    """, (session_id, participant_id, layout_id, json.dumps(items, ensure_ascii=False), sus_score, now))
     conn.commit(); conn.close()
 
     return jsonify({"ok": True, "sus_score": sus_score})
 
+@app.post("/feedback/submit")
+def feedback_submit():
+    d = request.get_json(force=True)
+    session_id = d.get("session_id")
+    participant_id = d.get("participant_id")
+    feedback_text = d.get("feedback", "")
+
+    now = int(time.time()*1000)
+    conn = db(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO feedbacks (session_id, participant_id, feedback, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (session_id, participant_id, feedback_text, now))
+    conn.commit()
+
+    # Build a full JSON export for the session (Sinhala-safe)
+    export = {}
+
+    # session
+    cur.execute("SELECT * FROM sessions WHERE id=?", (session_id,))
+    row = cur.fetchone()
+    export["session"] = dict(row) if row else {}
+
+    # trials
+    cur.execute("SELECT * FROM trials WHERE session_id=?", (session_id,))
+    export["trials"] = [dict(r) for r in cur.fetchall()]
+
+    # sus
+    cur.execute("SELECT * FROM sus WHERE session_id=?", (session_id,))
+    export["sus"] = [dict(r) for r in cur.fetchall()]
+
+    # events
+    cur.execute("SELECT * FROM events WHERE session_id=?", (session_id,))
+    export["events"] = [dict(r) for r in cur.fetchall()]
+
+    # feedbacks
+    cur.execute("SELECT * FROM feedbacks WHERE session_id=?", (session_id,))
+    export["feedbacks"] = [dict(r) for r in cur.fetchall()]
+
+    json_path = os.path.join(DATA_DIR, f"session_{session_id}.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(export, f, ensure_ascii=False, indent=2)
+
+    conn.close()
+    return jsonify({"ok": True, "path": json_path})
+
 if __name__ == "__main__":
+    # Flask dev server
     app.run(host="0.0.0.0", port=5000, debug=True)
