@@ -174,13 +174,16 @@ export default function EvalWrapper() {
             const nextIndex = layoutIndex + 1;
             setLayoutIndex(nextIndex);
             setPromptIndex(0);
-            // Next line is optional because we fetch in useEffect when phase === 'familiarize'
-            // But calling here warms up the next set early if you want.
-            // getPrompts().then(setPhasePrompts);
+
+            // Reset dwell times to default when new phase begins
+            setDwellMain(600);
+            setDwellPopup(450);
+
             setPhase("familiarize");
         } else {
             setPhase("feedback");
         }
+
     }
 
     return (
@@ -351,8 +354,51 @@ export default function EvalWrapper() {
 
             {/* ---------------- READY & TYPING ---------------- */}
             {phase === "ready" && phasePrompts && (
-                <ReadyScreen prompt={currentPrompt} seconds={10} onStart={startTyping} />
+                <div style={{ width: "100%", maxWidth: 720 }}>
+                    <div className="card" style={{ marginBottom: 16 }}>
+                        <h3 style={{ marginBottom: 8 }}>Prompt {promptIndex + 1}</h3>
+                        <p style={{ fontSize: 22, marginBottom: 6 }}>{currentPrompt}</p>
+
+                        {/* Optional dwell time adjustment before typing */}
+                        <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 12, paddingTop: 10 }}>
+                            <div style={{ fontSize: 16, marginBottom: 6 }}>
+                                Optional: Adjust dwell time before starting this prompt
+                            </div>
+
+                            {/* Eyespeak keyboards → show both main & popup sliders */}
+                            {currentLayout.includes("eyespeak") ? (
+                                <DwellSliders
+                                    main={dwellMain}
+                                    popup={dwellPopup}
+                                    setMain={setDwellMain}
+                                    setPopup={setDwellPopup}
+                                />
+                            ) : (
+                                /* Wijesekara → only one dwell time */
+                                <div style={{ marginTop: 6 }}>
+                                    <div className="label">Main Dwell (ms)</div>
+                                    <input
+                                        type="range"
+                                        min={200}
+                                        max={1200}
+                                        step={50}
+                                        value={dwellMain}
+                                        onChange={(e) => setDwellMain(Number(e.target.value))}
+                                        style={{ width: "100%", maxWidth: 300 }}
+                                    />
+                                    <span style={{ marginLeft: 8 }}>{dwellMain} ms</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Countdown and Ready button */}
+                        <div style={{ marginTop: 18 }}>
+                            <ReadyScreen prompt={currentPrompt} seconds={10} onStart={startTyping} />
+                        </div>
+                    </div>
+                </div>
             )}
+
 
             {phase === "typing" && (
                 <div
@@ -369,16 +415,38 @@ export default function EvalWrapper() {
                         dwellPopupMs={dwellPopup}
                         onChange={setCurrentText}
                     />
-                    <div style={{ marginTop: 12, alignSelf: "center" }}>
+                    <div style={{ marginTop: 16, alignSelf: "center" }}>
                         <button
-                            className="btn ghost"
                             onClick={finishRound}
                             disabled={submittingRef.current}
                             title={submittingRef.current ? "Saving…" : "Submit this answer"}
+                            style={{
+                                backgroundColor: submittingRef.current ? "#fca5a5cc" : "#fca5a5", // light red, dimmed when saving
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 10,
+                                padding: "16px 60px",
+                                fontSize: 20,
+                                fontWeight: 600,
+                                cursor: submittingRef.current ? "not-allowed" : "pointer",
+                                transition: "background-color 0.3s ease, transform 0.2s ease",
+                                width: 260,
+                                textAlign: "center",
+                                boxShadow: "0 2px 8px rgba(0,0,0,0.15)"
+                            }}
+                            onMouseEnter={(e) => {
+                                if (!submittingRef.current)
+                                    (e.target as HTMLButtonElement).style.backgroundColor = "#f87171"; // hover darker
+                            }}
+                            onMouseLeave={(e) => {
+                                if (!submittingRef.current)
+                                    (e.target as HTMLButtonElement).style.backgroundColor = "#fca5a5"; // back to normal
+                            }}
                         >
                             {submittingRef.current ? "Saving…" : "Submit"}
                         </button>
                     </div>
+
                 </div>
             )}
 

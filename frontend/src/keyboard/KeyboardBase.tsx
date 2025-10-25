@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, {useState, useRef, useEffect} from "react";
 import axios from "axios";
 import VowelPopup from "./VowelPopup";
 import { useGaze } from "../gaze/useGaze";
@@ -54,7 +54,15 @@ export default function KeyboardBase({
     const [showBias, setShowBias] = useState(false);
 
     const containerRef = useRef<HTMLDivElement>(null);
-    const gaze = useGaze("ws://127.0.0.1:7777");
+    const [gaze, setGaze] = useState({ x: window.innerWidth / 2, y: 80 }); // start safely at top-center
+
+    const gazeData = useGaze("ws://127.0.0.1:7777");
+
+    // update gaze only after connection stabilizes
+    useEffect(() => {
+        if (gazeData?.x && gazeData?.y) setGaze(gazeData);
+    }, [gazeData]);
+
     const { progress } = useDwell(gaze.x, gaze.y, {
         stabilizationMs: 120,
         stabilityRadiusPx: 90,
