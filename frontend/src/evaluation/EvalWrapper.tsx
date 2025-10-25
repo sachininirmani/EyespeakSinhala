@@ -92,7 +92,6 @@ export default function EvalWrapper() {
     }
 
     // Load prompts once per phase (per layoutIndex)
-    // This ensures each keyboard gets its OWN 4+3 random subset, and stays stable.
     const fetchedForLayoutRef = useRef<number | null>(null);
     useEffect(() => {
         if (phase === "familiarize" && layoutIndex !== fetchedForLayoutRef.current) {
@@ -113,7 +112,6 @@ export default function EvalWrapper() {
     }
 
     function startTyping() {
-        // Guard against double-trigger (e.g., fast double click)
         if (startingRef.current) return;
         startingRef.current = true;
 
@@ -124,12 +122,11 @@ export default function EvalWrapper() {
         setStartTime(performance.now());
         setPhase("typing");
 
-        // release guard shortly after render switch
         setTimeout(() => (startingRef.current = false), 50);
     }
 
     async function finishRound() {
-        if (submittingRef.current) return; // prevent double submit
+        if (submittingRef.current) return;
         submittingRef.current = true;
 
         const end = performance.now();
@@ -183,8 +180,27 @@ export default function EvalWrapper() {
         } else {
             setPhase("feedback");
         }
-
     }
+
+    // Handle Enter key on session end
+    useEffect(() => {
+        if (phase !== "done") return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Enter") {
+                const currentNum = parseInt(participant.replace(/\D/g, "")) || 1;
+                const nextPid = `P${(currentNum + 1).toString().padStart(3, "0")}`;
+                setParticipant(nextPid);
+                setLayouts([]);
+                setLayoutIndex(0);
+                setPromptIndex(0);
+                setPhase("setup");
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [phase, participant]);
 
     return (
         <div
@@ -236,7 +252,9 @@ export default function EvalWrapper() {
                         </div>
 
                         <div>
-                            <div className="label">Familiar with Eye-Controlled Keyboards?</div>
+                            <div className="label">
+                                Familiar with Eye-Controlled Keyboards?
+                            </div>
                             <select
                                 value={familiarity}
                                 onChange={(e) => setFamiliarity(e.target.value)}
@@ -316,7 +334,7 @@ export default function EvalWrapper() {
             )}
 
             {/* ---------------- STATUS BAR ---------------- */}
-            {phase !== "setup" && phase !== "biascalibration" && (
+            {phase !== "setup" && phase !== "biascalibration" && phase !== "done" && (
                 <div className="card" style={{ marginTop: 12 }}>
                     <div className="row">
                         <div>
@@ -325,9 +343,11 @@ export default function EvalWrapper() {
                         <div>
                             <b>Layout:</b> {currentLayout}
                         </div>
-                        <div>
-                            <b>Prompt:</b> {promptIndex + 1} / {totalPromptsThisPhase}
-                        </div>
+                        {phase !== "sus" && (
+                            <div>
+                                <b>Prompt:</b> {promptIndex + 1} / {totalPromptsThisPhase}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -359,13 +379,17 @@ export default function EvalWrapper() {
                         <h3 style={{ marginBottom: 8 }}>Prompt {promptIndex + 1}</h3>
                         <p style={{ fontSize: 22, marginBottom: 6 }}>{currentPrompt}</p>
 
-                        {/* Optional dwell time adjustment before typing */}
-                        <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 12, paddingTop: 10 }}>
+                        <div
+                            style={{
+                                borderTop: "1px solid #e2e8f0",
+                                marginTop: 12,
+                                paddingTop: 10,
+                            }}
+                        >
                             <div style={{ fontSize: 16, marginBottom: 6 }}>
                                 Optional: Adjust dwell time before starting this prompt
                             </div>
 
-                            {/* Eyespeak keyboards → show both main & popup sliders */}
                             {currentLayout.includes("eyespeak") ? (
                                 <DwellSliders
                                     main={dwellMain}
@@ -374,7 +398,6 @@ export default function EvalWrapper() {
                                     setPopup={setDwellPopup}
                                 />
                             ) : (
-                                /* Wijesekara → only one dwell time */
                                 <div style={{ marginTop: 6 }}>
                                     <div className="label">Main Dwell (ms)</div>
                                     <input
@@ -391,14 +414,16 @@ export default function EvalWrapper() {
                             )}
                         </div>
 
-                        {/* Countdown and Ready button */}
                         <div style={{ marginTop: 18 }}>
-                            <ReadyScreen prompt={currentPrompt} seconds={10} onStart={startTyping} />
+                            <ReadyScreen
+                                prompt={currentPrompt}
+                                seconds={10}
+                                onStart={startTyping}
+                            />
                         </div>
                     </div>
                 </div>
             )}
-
 
             {phase === "typing" && (
                 <div
@@ -419,9 +444,13 @@ export default function EvalWrapper() {
                         <button
                             onClick={finishRound}
                             disabled={submittingRef.current}
-                            title={submittingRef.current ? "Saving…" : "Submit this answer"}
+                            title={
+                                submittingRef.current ? "Saving…" : "Submit this answer"
+                            }
                             style={{
-                                backgroundColor: submittingRef.current ? "#fca5a5cc" : "#fca5a5", // light red, dimmed when saving
+                                backgroundColor: submittingRef.current
+                                    ? "#fca5a5cc"
+                                    : "#fca5a5",
                                 color: "#fff",
                                 border: "none",
                                 borderRadius: 10,
@@ -432,21 +461,22 @@ export default function EvalWrapper() {
                                 transition: "background-color 0.3s ease, transform 0.2s ease",
                                 width: 260,
                                 textAlign: "center",
-                                boxShadow: "0 2px 8px rgba(0,0,0,0.15)"
+                                boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
                             }}
                             onMouseEnter={(e) => {
                                 if (!submittingRef.current)
-                                    (e.target as HTMLButtonElement).style.backgroundColor = "#f87171"; // hover darker
+                                    (e.target as HTMLButtonElement).style.backgroundColor =
+                                        "#f87171";
                             }}
                             onMouseLeave={(e) => {
                                 if (!submittingRef.current)
-                                    (e.target as HTMLButtonElement).style.backgroundColor = "#fca5a5"; // back to normal
+                                    (e.target as HTMLButtonElement).style.backgroundColor =
+                                        "#fca5a5";
                             }}
                         >
                             {submittingRef.current ? "Saving…" : "Submit"}
                         </button>
                     </div>
-
                 </div>
             )}
 
@@ -495,10 +525,25 @@ export default function EvalWrapper() {
 
             {/* ---------------- DONE ---------------- */}
             {phase === "done" && (
-                <div className="card" style={{ marginTop: 12 }}>
-                    <h3>All layouts complete!</h3>
-                    <p>
-                        Data saved to backend SQLite and exported to a JSON file per session.
+                <div
+                    style={{
+                        textAlign: "center",
+                        marginTop: 60,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        height: "60vh",
+                    }}
+                >
+                    <h2 style={{ fontSize: 28, marginBottom: 12 }}>
+                        Thank you for participating!
+                    </h2>
+                    <p style={{ fontSize: 18, color: "#475569", marginBottom: 24 }}>
+                        All your responses have been recorded successfully.
+                    </p>
+                    <p style={{ fontSize: 16, color: "#64748b" }}>
+                        Press <b>Enter</b> to start the next participant session.
                     </p>
                 </div>
             )}
