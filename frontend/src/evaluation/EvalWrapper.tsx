@@ -1,49 +1,87 @@
-import React, { useEffect, useState } from "react";
-import { getPrompts, startSession, submitSUS, submitTrial, submitFeedback } from "../api";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+    getPrompts,
+    startSession,
+    submitSUS,
+    submitTrial,
+    submitFeedback,
+} from "../api";
 import type { LayoutId, PromptSet, Session } from "../types";
 import DwellSliders from "../components/DwellSliders";
 import ReadyScreen from "../components/ReadyScreen";
 import SUSForm from "../components/SUSForm";
-import Keyboard from "../keyboard/Keyboard";
+import KeyboardLoader from "../keyboard/KeyboardLoader";
 import BiasCalibration from "../components/BiasCalibration";
+import { getRandomizedLayouts } from "../keyboard/KeyboardLoader";
 
 export default function EvalWrapper() {
+    // Participant details
     const [participant, setParticipant] = useState("P001");
     const [participantName, setParticipantName] = useState("");
     const [participantAge, setParticipantAge] = useState("");
-    const [familiarity, setFamiliarity] = useState("No"); // default No
-    const [wearsSpecks, setWearsSpecks] = useState("No"); // default No
+    const [familiarity, setFamiliarity] = useState("No");
+    const [wearsSpecks, setWearsSpecks] = useState("No");
 
+    // Session & data
     const [session, setSession] = useState<Session | null>(null);
-    const [prompts, setPrompts] = useState<PromptSet | null>(null);
+
+    // Dwell timing
     const [dwellMain, setDwellMain] = useState(600);
     const [dwellPopup, setDwellPopup] = useState(450);
+
+    // State tracking
     const [phase, setPhase] = useState<
-        "setup" | "biascalibration" | "familiarize" | "ready" | "typing" | "sus" | "feedback" | "done"
+        | "setup"
+        | "biascalibration"
+        | "familiarize"
+        | "ready"
+        | "typing"
+        | "sus"
+        | "feedback"
+        | "done"
     >("setup");
+
+    const [layouts, setLayouts] = useState<LayoutId[]>([]);
     const [layoutIndex, setLayoutIndex] = useState(0);
-    const [roundIndex, setRoundIndex] = useState(0);
+
+    // Prompts (stable per phase)
+    const [phasePrompts, setPhasePrompts] = useState<PromptSet | null>(null);
+    const [promptIndex, setPromptIndex] = useState(0);
+
+    // Typing telemetry
     const [currentText, setCurrentText] = useState("");
     const [startTime, setStartTime] = useState<number | null>(null);
     const [keystrokes, setKeystrokes] = useState(0);
     const [deletes, setDeletes] = useState(0);
     const [eyeDist, setEyeDist] = useState(0);
+
     const [feedback, setFeedback] = useState("");
 
-    const layouts: LayoutId[] = ["eyespeak", "wijesekara", "helakuru"];
+    const [showCalibration, setShowCalibration] = useState(false);
+
+    // Anti-double-advance guards
+    const startingRef = useRef(false);
+    const submittingRef = useRef(false);
+
+    // Derived
     const currentLayout = layouts[layoutIndex];
-    const compPrompts = prompts?.composition ?? [];
-    const currentPrompt = compPrompts[roundIndex % compPrompts.length];
-    const promptId = `comp_${roundIndex}`;
+    const allOneWord = phasePrompts?.one_word ?? [];
+    const allSentences = phasePrompts?.composition ?? [];
+    const allPromptsForPhase = useMemo(
+        () => [...allOneWord, ...allSentences],
+        [allOneWord, allSentences]
+    );
+    const totalPromptsThisPhase = allPromptsForPhase.length;
+    const currentPrompt =
+        allPromptsForPhase[promptIndex % Math.max(1, totalPromptsThisPhase)];
 
-    useEffect(() => {
-        getPrompts().then(setPrompts);
-    }, []);
-
+    // Start session
     async function beginSession() {
+        const randomized = getRandomizedLayouts(); // random order for this user/session
+        setLayouts(randomized);
         const s = await startSession(
             participant,
-            layouts,
+            randomized,
             participantName,
             participantAge,
             familiarity,
@@ -53,42 +91,75 @@ export default function EvalWrapper() {
         setPhase("biascalibration");
     }
 
+    // Load prompts once per phase (per layoutIndex)
+    // This ensures each keyboard gets its OWN 4+3 random subset, and stays stable.
+    const fetchedForLayoutRef = useRef<number | null>(null);
+    useEffect(() => {
+        if (phase === "familiarize" && layoutIndex !== fetchedForLayoutRef.current) {
+            getPrompts().then((p) => {
+                setPhasePrompts(p);
+                setPromptIndex(0);
+                fetchedForLayoutRef.current = layoutIndex;
+            });
+        }
+    }, [phase, layoutIndex]);
+
     function finishBiasCalibration() {
         setPhase("familiarize");
     }
+
     function toReady() {
         setPhase("ready");
     }
+
     function startTyping() {
+        // Guard against double-trigger (e.g., fast double click)
+        if (startingRef.current) return;
+        startingRef.current = true;
+
         setCurrentText("");
         setEyeDist(0);
         setKeystrokes(0);
         setDeletes(0);
         setStartTime(performance.now());
         setPhase("typing");
+
+        // release guard shortly after render switch
+        setTimeout(() => (startingRef.current = false), 50);
     }
 
     async function finishRound() {
+        if (submittingRef.current) return; // prevent double submit
+        submittingRef.current = true;
+
         const end = performance.now();
         const durMs = Math.max(0, end - (startTime ?? end));
+
         await submitTrial({
             session_id: session?.session_id,
             participant_id: participant,
             layout_id: currentLayout,
-            round_id: `layout${layoutIndex}_round${roundIndex}`,
-            prompt_id: promptId,
-            intended_text: "",
+            round_id: `layout${layoutIndex}_round${promptIndex}`,
+            prompt_id: `prompt_${promptIndex}`,
+            intended_text: currentPrompt,
             transcribed_text: currentText,
             dwell_main_ms: dwellMain,
             dwell_popup_ms: dwellPopup,
             duration_ms: durMs,
             total_keystrokes: keystrokes,
             deletes,
-            eye_distance_px: eyeDist
+            eye_distance_px: eyeDist,
         });
-        setRoundIndex((r) => r + 1);
-        if ((roundIndex + 1) % 2 === 0) setPhase("sus");
-        else setPhase("familiarize");
+
+        if (promptIndex + 1 < totalPromptsThisPhase) {
+            setPromptIndex((p) => p + 1);
+            setPhase("ready");
+        } else {
+            setPromptIndex(0);
+            setPhase("sus");
+        }
+
+        submittingRef.current = false;
     }
 
     async function submitSUSForLayout(vals: number[]) {
@@ -96,18 +167,21 @@ export default function EvalWrapper() {
             session_id: session?.session_id,
             participant_id: participant,
             layout_id: currentLayout,
-            items: vals
+            items: vals,
         });
+
         if (layoutIndex + 1 < layouts.length) {
-            setLayoutIndex((i) => i + 1);
+            const nextIndex = layoutIndex + 1;
+            setLayoutIndex(nextIndex);
+            setPromptIndex(0);
+            // Next line is optional because we fetch in useEffect when phase === 'familiarize'
+            // But calling here warms up the next set early if you want.
+            // getPrompts().then(setPhasePrompts);
             setPhase("familiarize");
         } else {
-            // After last layout, move to feedback page
             setPhase("feedback");
         }
     }
-
-    const [showCalibration, setShowCalibration] = useState(false);
 
     return (
         <div
@@ -119,11 +193,12 @@ export default function EvalWrapper() {
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                background: "#f8fafc"
+                background: "#f8fafc",
             }}
         >
             <h2>Eyespeak Sinhala — Evaluation Runner</h2>
 
+            {/* ---------------- SETUP ---------------- */}
             {phase === "setup" && (
                 <div className="card">
                     <div className="label">Participant Setup</div>
@@ -159,7 +234,10 @@ export default function EvalWrapper() {
 
                         <div>
                             <div className="label">Familiar with Eye-Controlled Keyboards?</div>
-                            <select value={familiarity} onChange={(e) => setFamiliarity(e.target.value)}>
+                            <select
+                                value={familiarity}
+                                onChange={(e) => setFamiliarity(e.target.value)}
+                            >
                                 <option value="No">No</option>
                                 <option value="Yes">Yes</option>
                             </select>
@@ -167,7 +245,10 @@ export default function EvalWrapper() {
 
                         <div>
                             <div className="label">Wears Specks?</div>
-                            <select value={wearsSpecks} onChange={(e) => setWearsSpecks(e.target.value)}>
+                            <select
+                                value={wearsSpecks}
+                                onChange={(e) => setWearsSpecks(e.target.value)}
+                            >
                                 <option value="No">No</option>
                                 <option value="Yes">Yes</option>
                             </select>
@@ -176,8 +257,8 @@ export default function EvalWrapper() {
 
                     <div className="row" style={{ marginTop: 8 }}>
                         <div>
-                            <div className="label">Layouts</div>
-                            <code>{layouts.join(", ")}</code>
+                            <div className="label">Randomized Layout Order</div>
+                            <code>{layouts.join(", ") || "(will randomize on start)"}</code>
                         </div>
                     </div>
 
@@ -189,9 +270,9 @@ export default function EvalWrapper() {
                 </div>
             )}
 
+            {/* ---------------- CALIBRATION ---------------- */}
             {phase === "biascalibration" && (
                 <>
-                    {/* Step 1: Instruction screen */}
                     {!showCalibration && (
                         <div
                             className="card"
@@ -201,13 +282,14 @@ export default function EvalWrapper() {
                                 display: "flex",
                                 flexDirection: "column",
                                 alignItems: "center",
-                                justifyContent: "center"
+                                justifyContent: "center",
                             }}
                         >
                             <h3>Horizontal & Vertical Bias Calibration</h3>
                             <p style={{ textAlign: "center", maxWidth: 400 }}>
-                                Look at each dot on the screen as instructed. The system will compute
-                                your gaze bias and store it automatically for this session.
+                                Look at each dot on the screen as instructed. The system will
+                                compute your gaze bias and store it automatically for this
+                                session.
                             </p>
                             <button
                                 className="btn primary"
@@ -219,7 +301,6 @@ export default function EvalWrapper() {
                         </div>
                     )}
 
-                    {/* Step 2: Actual calibration sequence */}
                     {showCalibration && (
                         <BiasCalibration
                             onDone={() => {
@@ -231,6 +312,7 @@ export default function EvalWrapper() {
                 </>
             )}
 
+            {/* ---------------- STATUS BAR ---------------- */}
             {phase !== "setup" && phase !== "biascalibration" && (
                 <div className="card" style={{ marginTop: 12 }}>
                     <div className="row">
@@ -241,16 +323,24 @@ export default function EvalWrapper() {
                             <b>Layout:</b> {currentLayout}
                         </div>
                         <div>
-                            <b>Round:</b> {roundIndex + 1}
+                            <b>Prompt:</b> {promptIndex + 1} / {totalPromptsThisPhase}
                         </div>
                     </div>
                 </div>
             )}
 
+            {/* ---------------- FAMILIARIZATION ---------------- */}
             {phase === "familiarize" && (
                 <div className="card" style={{ marginTop: 12 }}>
-                    <div className="label">Familiarization (adjust dwell as needed)</div>
-                    <DwellSliders main={dwellMain} popup={dwellPopup} setMain={setDwellMain} setPopup={setDwellPopup} />
+                    <div className="label">
+                        Familiarization (adjust dwell as needed) for {currentLayout}
+                    </div>
+                    <DwellSliders
+                        main={dwellMain}
+                        popup={dwellPopup}
+                        setMain={setDwellMain}
+                        setPopup={setDwellPopup}
+                    />
                     <div style={{ marginTop: 8 }}>
                         <button className="btn primary" onClick={toReady}>
                             Ready
@@ -259,7 +349,8 @@ export default function EvalWrapper() {
                 </div>
             )}
 
-            {phase === "ready" && prompts && (
+            {/* ---------------- READY & TYPING ---------------- */}
+            {phase === "ready" && phasePrompts && (
                 <ReadyScreen prompt={currentPrompt} seconds={10} onStart={startTyping} />
             )}
 
@@ -269,22 +360,37 @@ export default function EvalWrapper() {
                         width: "100%",
                         flex: 1,
                         display: "flex",
-                        flexDirection: "column"
+                        flexDirection: "column",
                     }}
                 >
-                    <Keyboard dwellMainMs={dwellMain} dwellPopupMs={dwellPopup} onChange={setCurrentText} />
+                    <KeyboardLoader
+                        layoutId={currentLayout}
+                        dwellMainMs={dwellMain}
+                        dwellPopupMs={dwellPopup}
+                        onChange={setCurrentText}
+                    />
                     <div style={{ marginTop: 12, alignSelf: "center" }}>
-                        <button className="btn ghost" onClick={finishRound}>
-                            Submit
+                        <button
+                            className="btn ghost"
+                            onClick={finishRound}
+                            disabled={submittingRef.current}
+                            title={submittingRef.current ? "Saving…" : "Submit this answer"}
+                        >
+                            {submittingRef.current ? "Saving…" : "Submit"}
                         </button>
                     </div>
                 </div>
             )}
 
+            {/* ---------------- SUS ---------------- */}
             {phase === "sus" && <SUSForm onSubmit={submitSUSForLayout} />}
 
+            {/* ---------------- FEEDBACK ---------------- */}
             {phase === "feedback" && (
-                <div className="card" style={{ marginTop: 12, width: "100%", maxWidth: 720 }}>
+                <div
+                    className="card"
+                    style={{ marginTop: 12, width: "100%", maxWidth: 720 }}
+                >
                     <h3>Final Feedback (normal keyboard)</h3>
                     <p style={{ marginTop: -8, color: "#64748b" }}>
                         Please share any suggestions for improving Eyespeak Sinhala.
@@ -293,7 +399,13 @@ export default function EvalWrapper() {
                         placeholder="Your suggestions for improvement..."
                         value={feedback}
                         onChange={(e) => setFeedback(e.target.value)}
-                        style={{ width: "100%", height: 140, padding: 12, borderRadius: 8, border: "1px solid #cbd5e1" }}
+                        style={{
+                            width: "100%",
+                            height: 140,
+                            padding: 12,
+                            borderRadius: 8,
+                            border: "1px solid #cbd5e1",
+                        }}
                     />
                     <div style={{ marginTop: 10 }}>
                         <button
@@ -302,7 +414,7 @@ export default function EvalWrapper() {
                                 await submitFeedback({
                                     session_id: session?.session_id,
                                     participant_id: participant,
-                                    feedback
+                                    feedback,
                                 });
                                 setPhase("done");
                             }}
@@ -313,10 +425,13 @@ export default function EvalWrapper() {
                 </div>
             )}
 
+            {/* ---------------- DONE ---------------- */}
             {phase === "done" && (
                 <div className="card" style={{ marginTop: 12 }}>
                     <h3>All layouts complete!</h3>
-                    <p>Data saved to backend SQLite (backend/data/evaluation.db) and exported to a JSON file per session.</p>
+                    <p>
+                        Data saved to backend SQLite and exported to a JSON file per session.
+                    </p>
                 </div>
             )}
         </div>

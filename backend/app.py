@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3, time, os, json
+import random
 
 app = Flask(__name__)
 CORS(app)
@@ -169,9 +170,24 @@ def predict_vowel():
     suggestions = vowel_prediction_map.get(key, [])
     return jsonify(suggestions[:10])
 
+
 @app.get("/prompts")
 def get_prompts():
-    return jsonify(PROMPTS)
+    """Return randomized prompt subset (4 one-word + 3 composition)."""
+    try:
+        one_word_all = PROMPTS.get("one_word", [])
+        composition_all = PROMPTS.get("composition", [])
+
+        one_word_sample = random.sample(one_word_all, min(4, len(one_word_all)))
+        composition_sample = random.sample(composition_all, min(3, len(composition_all)))
+
+        return jsonify({
+            "one_word": one_word_sample,
+            "composition": composition_sample
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.post("/session/start")
 def session_start():
