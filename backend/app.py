@@ -164,11 +164,11 @@ def predict_vowel():
 
     if not prev_base:
         suggestions = vowel_bigrams.get(current_cons, [])
-        return jsonify(suggestions[:10])
+        return jsonify(suggestions[:15])
 
     key = prev_base + current_cons
     suggestions = vowel_prediction_map.get(key, [])
-    return jsonify(suggestions[:10])
+    return jsonify(suggestions[:15])
 
 
 @app.get("/prompts")

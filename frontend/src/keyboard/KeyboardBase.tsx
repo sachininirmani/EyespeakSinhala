@@ -157,6 +157,34 @@ export default function KeyboardBase({
         await fetchWordPredictions(lastWord);
     };
 
+    // ---- v2-only optimization: hide FIRST-SET last row (vowels) after first char in a word ----
+    const rows = getCurrentLayout(); // matrix (rows x cols)
+    const columns = layout.columns ?? 6;
+
+    // Only apply when:
+    // - layout is eyespeak_v2
+    // - we are on the first set (not second, not numbers, not punctuation)
+    const isV2FirstSetActive =
+        layout.id === "eyespeak_v2" &&
+        !isSecondStage &&
+        !showNumbers &&
+        !showPunctuation;
+
+    const lastWord = (typedText.split(" ").pop() ?? "");
+    const wordHasAtLeastOneChar = lastWord.length > 0;
+
+    // Hide when already typed >= 1 character in current word
+    const shouldHideVowelRow = isV2FirstSetActive && wordHasAtLeastOneChar;
+
+    // Compute last row boundaries in the flattened mapping to tag those keys
+    const lastRowIndex = Math.max(rows.length - 1, 0);
+    const flat = rows.flat();
+    // Determine how many keys are in rows before last to find start index of last row
+    const lastRowStartIndex = rows
+        .slice(0, lastRowIndex)
+        .reduce((acc, r) => acc + r.length, 0);
+    const lastRowEndIndexExclusive = lastRowStartIndex + (rows[lastRowIndex]?.length ?? 0);
+
     return (
         <div
             ref={containerRef}
@@ -222,86 +250,96 @@ export default function KeyboardBase({
             <div
                 style={{
                     display: "grid",
-                    gridTemplateColumns: `repeat(${layout.columns ?? 6}, 1fr)`,
+                    gridTemplateColumns: `repeat(${columns}, 1fr)`,
                     gap: 10,
                     marginBottom: 16,
                 }}
             >
-                {getCurrentLayout()
-                    .flat()
-                    .map((char, index) => {
-                        const secondaryChar =
-                            layout.id === "wijesekara"
-                                ? layout.primarySecondaryMap?.[char]
-                                : null;
-                        const isDual = !!secondaryChar;
-                        const isExtended =
-                            layout.id === "wijesekara" &&
-                            isDual &&
-                            dwellTime > dwellMainMs * 1.5 &&
-                            activeKey === char;
+                {flat.map((char, index) => {
+                    const secondaryChar =
+                        layout.id === "wijesekara"
+                            ? layout.primarySecondaryMap?.[char]
+                            : null;
+                    const isDual = !!secondaryChar;
+                    const isExtended =
+                        layout.id === "wijesekara" &&
+                        isDual &&
+                        dwellTime > dwellMainMs * 1.5 &&
+                        activeKey === char;
 
-                        // replace last typed primary with secondary during long dwell
-                        useEffect(() => {
-                            if (isExtended && isDual) {
-                                setTypedText((prev) => {
-                                    if (prev.endsWith(char)) {
-                                        const updated = prev.slice(0, -1) + secondaryChar;
-                                        onChange?.(updated);
-                                        return updated;
-                                    }
-                                    return prev;
-                                });
-                            }
-                        }, [isExtended]);
+                    // replace last typed primary with secondary during long dwell
+                    useEffect(() => {
+                        if (isExtended && isDual) {
+                            setTypedText((prev) => {
+                                if (prev.endsWith(char)) {
+                                    const updated = prev.slice(0, -1) + secondaryChar;
+                                    onChange?.(updated);
+                                    return updated;
+                                }
+                                return prev;
+                            });
+                        }
+                    }, [isExtended]);
 
-                        return (
-                            <button
-                                key={index}
-                                onClick={(e) => handleClick(char, e)}
-                                style={{
-                                    position: "relative",
-                                    padding: "16px",
-                                    fontSize: isExtended && isDual ? "20px" : "26px",
-                                    borderRadius: 8,
-                                    transition: "all 0.15s ease",
-                                    backgroundColor:
-                                        activeKey === char
-                                            ? isExtended
-                                                ? "#ffd6d6"
-                                                : "#b3e6ff"
-                                            : "#fdfdfd",
-                                    border: "1px solid #ccc",
-                                }}
-                            >
-                <span
-                    style={{
-                        fontSize: isExtended && isDual ? "20px" : "30px",
-                        opacity: isExtended && isDual ? 0.5 : 1,
-                    }}
-                >
-                  {char}
+                    // Determine if this key belongs to the FIRST-SET last row (vowel row)
+                    const isKeyInFirstSetLastRow =
+                        index >= lastRowStartIndex && index < lastRowEndIndexExclusive;
+
+                    // Hide condition: only for v2 first set + vowel row after first char entered
+                    const hideThisKey = shouldHideVowelRow && isKeyInFirstSetLastRow;
+
+                    return (
+                        <button
+                            key={index}
+                            onClick={(e) => handleClick(char, e)}
+                            style={{
+                                position: "relative",
+                                padding: "16px",
+                                fontSize: isExtended && isDual ? "20px" : "26px",
+                                borderRadius: 8,
+                                transition: "all 0.15s ease",
+                                backgroundColor:
+                                    activeKey === char
+                                        ? isExtended
+                                            ? "#ffd6d6"
+                                            : "#b3e6ff"
+                                        : "#fdfdfd",
+                                border: "1px solid #ccc",
+                                // Keep the grid row height constant while "hiding"
+                                visibility: hideThisKey ? "hidden" : "visible",
+                                pointerEvents: hideThisKey ? "none" : "auto",
+                            }}
+                            aria-hidden={hideThisKey}
+                            tabIndex={hideThisKey ? -1 : 0}
+                        >
+              <span
+                  style={{
+                      fontSize: isExtended && isDual ? "20px" : "30px",
+                      opacity: isExtended && isDual ? 0.5 : 1,
+                  }}
+              >
+                {char}
+              </span>
+
+                            {isDual && (
+                                <span
+                                    style={{
+                                        position: "absolute",
+                                        top: 4,
+                                        right: 6,
+                                        fontSize: isExtended ? "28px" : "16px",
+                                        fontWeight: isExtended ? 600 : 400,
+                                        color: isExtended ? "#111" : "#555",
+                                        opacity: isExtended ? 1 : 0.8,
+                                        transition: "all 0.1s ease",
+                                    }}
+                                >
+                  {secondaryChar}
                 </span>
-
-                                {isDual && (
-                                    <span
-                                        style={{
-                                            position: "absolute",
-                                            top: 4,
-                                            right: 6,
-                                            fontSize: isExtended ? "28px" : "16px",
-                                            fontWeight: isExtended ? 600 : 400,
-                                            color: isExtended ? "#111" : "#555",
-                                            opacity: isExtended ? 1 : 0.8,
-                                            transition: "all 0.1s ease",
-                                        }}
-                                    >
-                    {secondaryChar}
-                  </span>
-                                )}
-                            </button>
-                        );
-                    })}
+                            )}
+                        </button>
+                    );
+                })}
             </div>
 
             {/* controls */}
@@ -320,6 +358,7 @@ export default function KeyboardBase({
                     onClick={() => {
                         triggerKeyFlash("Space");
                         setTypedText((prev) => prev + " ");
+                        onChange?.((typedText + " "));
                         setVowelPopup(null);
                     }}
                     style={{ ...controlButtonStyle, flex: 2 }}
@@ -329,8 +368,9 @@ export default function KeyboardBase({
                 <button
                     onClick={() => {
                         triggerKeyFlash("⌫ Delete");
-                        setTypedText((prev) => prev.slice(0, -1));
-                        onChange?.(typedText.slice(0, -1));
+                        const next = typedText.slice(0, -1);
+                        setTypedText(next);
+                        onChange?.(next);
                         setVowelPopup(null);
                     }}
                     style={controlButtonStyle}
