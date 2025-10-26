@@ -55,18 +55,7 @@ export default function ReadyScreen({
                 width: "100%"
             }}
         >
-            <div style={{ fontSize: 18, marginBottom: 8 }}>පළමුව මෙය කියවන්න</div>
 
-            <div
-                style={{
-                    fontSize: 22,
-                    marginBottom: 10,
-                    color: "#1e293b",
-                    fontWeight: 500
-                }}
-            >
-                {prompt}
-            </div>
 
             <div style={{ fontSize: 16, opacity: 0.8, marginBottom: 12 }}>
                 ආරම්භයට {timeLeft} s

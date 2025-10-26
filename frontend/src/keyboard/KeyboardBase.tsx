@@ -1,4 +1,4 @@
-import React, {useState, useRef, useEffect} from "react";
+import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import VowelPopup from "./VowelPopup";
 import { useGaze } from "../gaze/useGaze";
@@ -6,10 +6,13 @@ import { useDwell } from "../gaze/useDwell";
 import GazeIndicator from "../gaze/GazeIndicator";
 import BiasTuner from "../gaze/BiasTuner";
 
-const numbers = [["1", "2", "3", "4", "5", "6"], ["7", "8", "9", "0", "(", ")"]];
+const numbers = [
+    ["1", "2", "3", "4", "5", "6"],
+    ["7", "8", "9", "0", "(", ")"],
+];
 const punctuation = [
     [".", ",", "!", "?", ":", ";"],
-    ['"', "'", "’", "“", "”", "…"]
+    ['"', "'", "’", "“", "”", "…"],
 ];
 
 const controlButtonStyle: React.CSSProperties = {
@@ -18,7 +21,7 @@ const controlButtonStyle: React.CSSProperties = {
     backgroundColor: "#fff5cc",
     border: "1px solid #ccc",
     borderRadius: 8,
-    transition: "background-color 0.2s ease"
+    transition: "background-color 0.2s ease",
 };
 
 const TYPED_ROW_MIN_HEIGHT = 30;
@@ -28,14 +31,16 @@ export default function KeyboardBase({
                                          layout,
                                          dwellMainMs,
                                          dwellPopupMs,
-                                         onChange
+                                         onChange,
                                      }: {
     layout: {
+        columns: number;
         id: string;
         label: string;
         hasVowelPopup: boolean;
         firstStageLetters: string[][];
         secondStageLetters: string[][];
+        primarySecondaryMap?: Record<string, string>;
     };
     dwellMainMs: number;
     dwellPopupMs: number;
@@ -54,11 +59,9 @@ export default function KeyboardBase({
     const [showBias, setShowBias] = useState(false);
 
     const containerRef = useRef<HTMLDivElement>(null);
-    const [gaze, setGaze] = useState({ x: window.innerWidth / 2, y: 80 }); // start safely at top-center
-
+    const [gaze, setGaze] = useState({ x: window.innerWidth / 2, y: 80 }); // safe start
     const gazeData = useGaze("ws://127.0.0.1:7777");
 
-    // update gaze only after connection stabilizes
     useEffect(() => {
         if (gazeData?.x && gazeData?.y) setGaze(gazeData);
     }, [gazeData]);
@@ -68,8 +71,11 @@ export default function KeyboardBase({
         stabilityRadiusPx: 90,
         dwellMs: dwellMainMs,
         dwellMsPopup: dwellPopupMs,
-        refractoryMs: 200
+        refractoryMs: 200,
     });
+
+    // pseudo dwell time derived from progress (0–1)
+    const dwellTime = dwellMainMs * progress;
 
     const triggerKeyFlash = (key: string) => {
         setActiveKey(key);
@@ -85,7 +91,7 @@ export default function KeyboardBase({
     const fetchWordPredictions = async (prefix: string) => {
         try {
             const res = await axios.get("http://localhost:5000/predict/word", {
-                params: { prefix }
+                params: { prefix },
             });
             setSuggestions(res.data);
         } catch {}
@@ -98,7 +104,7 @@ export default function KeyboardBase({
     ) => {
         try {
             const vowelRes = await axios.get("http://localhost:5000/predict/vowel", {
-                params: { prefix, current: char }
+                params: { prefix, current: char },
             });
             if (
                 Array.isArray(vowelRes.data) &&
@@ -110,8 +116,8 @@ export default function KeyboardBase({
                     options: vowelRes.data,
                     position: {
                         top: rect.top - containerRef.current.offsetTop,
-                        left: rect.left - containerRef.current.offsetLeft
-                    }
+                        left: rect.left - containerRef.current.offsetLeft,
+                    },
                 });
             } else setVowelPopup(null);
         } catch {
@@ -158,7 +164,7 @@ export default function KeyboardBase({
                 padding: "16px clamp(8px, 2vw, 24px)",
                 position: "relative",
                 width: "100%",
-                maxWidth: "100%"
+                maxWidth: "100%",
             }}
         >
             <div
@@ -167,12 +173,13 @@ export default function KeyboardBase({
                     fontSize: 18,
                     minHeight: TYPED_ROW_MIN_HEIGHT,
                     display: "flex",
-                    alignItems: "center"
+                    alignItems: "center",
                 }}
             >
                 <strong>Typed Text:&nbsp;</strong> <span>{typedText}</span>
             </div>
 
+            {/* suggestion bar */}
             <div
                 style={{
                     height: SUGGESTION_ROW_HEIGHT,
@@ -185,7 +192,7 @@ export default function KeyboardBase({
                     border: "1px solid #e1ecff",
                     borderRadius: 10,
                     overflowX: "auto",
-                    whiteSpace: "nowrap"
+                    whiteSpace: "nowrap",
                 }}
             >
                 {suggestions.length === 0 ? (
@@ -202,7 +209,7 @@ export default function KeyboardBase({
                                 fontSize: "20px",
                                 backgroundColor: "#e6f0ff",
                                 border: "1px solid #c7dafd",
-                                borderRadius: 8
+                                borderRadius: 8,
                             }}
                         >
                             {word}
@@ -215,30 +222,86 @@ export default function KeyboardBase({
             <div
                 style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(6, 1fr)",
+                    gridTemplateColumns: `repeat(${layout.columns ?? 6}, 1fr)`,
                     gap: 10,
-                    marginBottom: 16
+                    marginBottom: 16,
                 }}
             >
                 {getCurrentLayout()
                     .flat()
-                    .map((char, index) => (
-                        <button
-                            key={index}
-                            onClick={(e) => handleClick(char, e)}
-                            style={{
-                                padding: "16px",
-                                fontSize: "24px",
-                                borderRadius: 8,
-                                transition: "background-color 0.15s ease",
-                                backgroundColor:
-                                    activeKey === char ? "#b3e6ff" : "#fdfdfd",
-                                border: "1px solid #ccc"
-                            }}
-                        >
-                            {char}
-                        </button>
-                    ))}
+                    .map((char, index) => {
+                        const secondaryChar =
+                            layout.id === "wijesekara"
+                                ? layout.primarySecondaryMap?.[char]
+                                : null;
+                        const isDual = !!secondaryChar;
+                        const isExtended =
+                            layout.id === "wijesekara" &&
+                            isDual &&
+                            dwellTime > dwellMainMs * 1.5 &&
+                            activeKey === char;
+
+                        // replace last typed primary with secondary during long dwell
+                        useEffect(() => {
+                            if (isExtended && isDual) {
+                                setTypedText((prev) => {
+                                    if (prev.endsWith(char)) {
+                                        const updated = prev.slice(0, -1) + secondaryChar;
+                                        onChange?.(updated);
+                                        return updated;
+                                    }
+                                    return prev;
+                                });
+                            }
+                        }, [isExtended]);
+
+                        return (
+                            <button
+                                key={index}
+                                onClick={(e) => handleClick(char, e)}
+                                style={{
+                                    position: "relative",
+                                    padding: "16px",
+                                    fontSize: isExtended && isDual ? "20px" : "26px",
+                                    borderRadius: 8,
+                                    transition: "all 0.15s ease",
+                                    backgroundColor:
+                                        activeKey === char
+                                            ? isExtended
+                                                ? "#ffd6d6"
+                                                : "#b3e6ff"
+                                            : "#fdfdfd",
+                                    border: "1px solid #ccc",
+                                }}
+                            >
+                <span
+                    style={{
+                        fontSize: isExtended && isDual ? "20px" : "30px",
+                        opacity: isExtended && isDual ? 0.5 : 1,
+                    }}
+                >
+                  {char}
+                </span>
+
+                                {isDual && (
+                                    <span
+                                        style={{
+                                            position: "absolute",
+                                            top: 4,
+                                            right: 6,
+                                            fontSize: isExtended ? "28px" : "16px",
+                                            fontWeight: isExtended ? 600 : 400,
+                                            color: isExtended ? "#111" : "#555",
+                                            opacity: isExtended ? 1 : 0.8,
+                                            transition: "all 0.1s ease",
+                                        }}
+                                    >
+                    {secondaryChar}
+                  </span>
+                                )}
+                            </button>
+                        );
+                    })}
             </div>
 
             {/* controls */}
@@ -287,8 +350,20 @@ export default function KeyboardBase({
                     position={vowelPopup.position}
                 />
             )}
+
             {showBias && <BiasTuner onClose={() => setShowBias(false)} />}
-            <GazeIndicator x={gaze.x} y={gaze.y} progress={progress} />
+
+            <GazeIndicator
+                x={gaze.x}
+                y={gaze.y}
+                progress={progress}
+                color={
+                    layout.id === "wijesekara" && dwellTime > dwellMainMs * 1.5
+                        ? "#ff7675"
+                        : "#3b82f6"
+                }
+                layoutId={layout.id}
+            />
         </div>
     );
 }
