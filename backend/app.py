@@ -55,6 +55,7 @@ def init_db():
             layout_id TEXT,
             round_id TEXT,
             prompt_id TEXT,
+            prompt TEXT,
             intended_text TEXT,
             transcribed_text TEXT,
             dwell_main_ms INTEGER,
@@ -63,6 +64,9 @@ def init_db():
             total_keystrokes INTEGER,
             deletes INTEGER,
             eye_distance_px REAL,
+            word_count INTEGER,
+            vowel_popup_clicks INTEGER,
+            vowel_popup_more_clicks INTEGER,
             gross_wpm REAL,
             net_wpm REAL,
             accuracy_pct REAL,
@@ -70,6 +74,11 @@ def init_db():
             created_at INTEGER
         )
     """)
+    # add columns if migrating an existing DB
+    ensure_column(conn, "trials", "prompt", "TEXT")
+    ensure_column(conn, "trials", "word_count", "INTEGER")
+    ensure_column(conn, "trials", "vowel_popup_clicks", "INTEGER")
+    ensure_column(conn, "trials", "vowel_popup_more_clicks", "INTEGER")
 
     # events
     cur.execute("""
@@ -101,7 +110,7 @@ def init_db():
         )
     """)
 
-    # feedbacks (new)
+    # feedbacks
     cur.execute("""
         CREATE TABLE IF NOT EXISTS feedbacks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,6 +119,68 @@ def init_db():
             feedback TEXT,
             created_at INTEGER
         )
+    """)
+
+    # ---- Trigger: recompute net_wpm and accuracy_pct after intended_text is updated ----
+    # Uses SQLite JSON1 (bundled in standard SQLite) to split by spaces via a synthetic JSON array.
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS update_metrics_after_intended
+        AFTER UPDATE OF intended_text ON trials
+        FOR EACH ROW
+        BEGIN
+            -- Only compute when intended_text is non-empty
+            UPDATE trials
+            SET
+                net_wpm = CASE
+                    WHEN length(trim(NEW.intended_text)) > 0 THEN (
+                        (
+                            -- correct_words
+                            SELECT COUNT(*)
+                            FROM (
+                                SELECT value AS w FROM json_each(
+                                    '["' || REPLACE(NEW.intended_text, ' ', '","') || '"]'
+                                )
+                            )
+                            INTERSECT
+                            SELECT w FROM (
+                                SELECT value AS w FROM json_each(
+                                    '["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'
+                                )
+                            )
+                        ) / (NEW.duration_ms / 60000.0)
+                    )
+                    ELSE NULL
+                END,
+                accuracy_pct = CASE
+                    WHEN length(trim(NEW.intended_text)) > 0 THEN (
+                        100.0 * (
+                            (
+                                SELECT COUNT(*)
+                                FROM (
+                                    SELECT value AS w FROM json_each(
+                                        '["' || REPLACE(NEW.intended_text, ' ', '","') || '"]'
+                                    )
+                                )
+                                INTERSECT
+                                SELECT w FROM (
+                                    SELECT value AS w FROM json_each(
+                                        '["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'
+                                    )
+                                )
+                            )
+                        ) / NULLIF((
+                            SELECT COUNT(*)
+                            FROM (
+                                SELECT value AS w FROM json_each(
+                                    '["' || REPLACE(NEW.intended_text, ' ', '","') || '"]'
+                                )
+                            )
+                        ), 0)
+                    )
+                    ELSE NULL
+                END
+            WHERE id = NEW.id;
+        END;
     """)
 
     conn.commit()
@@ -170,7 +241,6 @@ def predict_vowel():
     suggestions = vowel_prediction_map.get(key, [])
     return jsonify(suggestions[:15])
 
-
 @app.get("/prompts")
 def get_prompts():
     """Return randomized prompt subset (4 one-word + 3 composition)."""
@@ -187,7 +257,6 @@ def get_prompts():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.post("/session/start")
 def session_start():
@@ -244,55 +313,65 @@ def trial_submit():
     layout_id = d["layout_id"]
     round_id = d["round_id"]
     prompt_id = d.get("prompt_id","")
+    prompt = d.get("prompt","")
     intended_text = d.get("intended_text","")
     transcribed_text = d.get("transcribed_text","")
     dwell_main_ms = int(d.get("dwell_main_ms", 600))
-    dwell_popup_ms = int(d.get("dwell_popup_ms", 450))
+    dwell_popup_ms = d.get("dwell_popup_ms", 450)
     duration_ms = int(d.get("duration_ms", 0))
     total_keystrokes = int(d.get("total_keystrokes", 0))
     deletes = int(d.get("deletes", 0))
     eye_distance_px = float(d.get("eye_distance_px", 0.0))
+    word_count = int(d.get("word_count", 0))
+    vowel_popup_clicks = int(d.get("vowel_popup_clicks", 0))
+    vowel_popup_more_clicks = int(d.get("vowel_popup_more_clicks", 0))
 
-    def char_count(s):
-        return len(s)
-    chars = char_count(transcribed_text)
+    # wijesekara has no vowel popup: store as NULL
+    if layout_id == "wijesekara":
+        dwell_popup_ms = None
+
+    chars = len(transcribed_text)
     t_min = max(0.0001, duration_ms / 60000.0)
-    gross_wpm = (chars / 5.0) / t_min
 
-    def lev(a, b):
-        m, n = len(a), len(b)
-        dp = list(range(n+1))
-        for i in range(1, m+1):
-            prev, dp[0] = dp[0], i
-            for j in range(1, n+1):
-                tmp = dp[j]
-                cost = 0 if a[i-1] == b[j-1] else 1
-                dp[j] = min(dp[j]+1, dp[j-1]+1, prev+cost)
-                prev = tmp
-        return dp[n]
+    # Gross WPM: total words per minute (including mistakes)
+    gross_wpm = (word_count / t_min) if word_count > 0 else 0.0
 
-    INF = lev(transcribed_text, intended_text)
-    net_wpm = ((chars - INF) / 5.0) / t_min
-    accuracy_pct = 100.0 * (max(0, chars - INF) / max(1, chars))
+    # KSPC
     kspc = (total_keystrokes / max(1, chars))
+
+    # net_wpm / accuracy are computed later via trigger when intended_text is filled.
+    net_wpm = None
+    accuracy_pct = None
 
     now = int(time.time()*1000)
     conn = db(); cur = conn.cursor()
     cur.execute("""
-        INSERT INTO trials (session_id, participant_id, layout_id, round_id, prompt_id, intended_text, transcribed_text,
-                            dwell_main_ms, dwell_popup_ms, duration_ms, total_keystrokes, deletes, eye_distance_px,
-                            gross_wpm, net_wpm, accuracy_pct, kspc, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (session_id, participant_id, layout_id, round_id, prompt_id, intended_text, transcribed_text,
-          dwell_main_ms, dwell_popup_ms, duration_ms, total_keystrokes, deletes, eye_distance_px,
-          gross_wpm, net_wpm, accuracy_pct, kspc, now))
+        INSERT INTO trials (
+            session_id, participant_id, layout_id, round_id, prompt_id, prompt,
+            intended_text, transcribed_text,
+            dwell_main_ms, dwell_popup_ms, duration_ms,
+            total_keystrokes, deletes, eye_distance_px,
+            word_count, vowel_popup_clicks, vowel_popup_more_clicks,
+            gross_wpm, net_wpm, accuracy_pct, kspc, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        session_id, participant_id, layout_id, round_id, prompt_id, prompt,
+        intended_text, transcribed_text,
+        dwell_main_ms, dwell_popup_ms, duration_ms,
+        total_keystrokes, deletes, eye_distance_px,
+        word_count, vowel_popup_clicks, vowel_popup_more_clicks,
+        gross_wpm, net_wpm, accuracy_pct, kspc, now
+    ))
     conn.commit(); conn.close()
 
     return jsonify({
         "ok": True,
         "metrics": {
-            "gross_wpm": gross_wpm, "net_wpm": net_wpm,
-            "accuracy_pct": accuracy_pct, "kspc": kspc
+            "gross_wpm": gross_wpm,
+            "net_wpm": net_wpm,
+            "accuracy_pct": accuracy_pct,
+            "kspc": kspc
         }
     })
 

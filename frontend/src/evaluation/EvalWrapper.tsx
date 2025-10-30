@@ -14,6 +14,14 @@ import KeyboardLoader from "../keyboard/KeyboardLoader";
 import BiasCalibration from "../components/BiasCalibration";
 import { getRandomizedLayouts } from "../keyboard/KeyboardLoader";
 
+type LiveMetrics = {
+    total_keystrokes: number;
+    deletes: number;
+    eye_distance_px: number;
+    vowel_popup_clicks: number;
+    vowel_popup_more_clicks: number;
+};
+
 export default function EvalWrapper() {
     // Participant details
     const [participant, setParticipant] = useState("P001");
@@ -27,7 +35,7 @@ export default function EvalWrapper() {
 
     // Dwell timing
     const [dwellMain, setDwellMain] = useState(600);
-    const [dwellPopup, setDwellPopup] = useState(450);
+    const [dwellPopup, setDwellPopup] = useState<number | null>(450);
 
     // State tracking
     const [phase, setPhase] = useState<
@@ -51,9 +59,13 @@ export default function EvalWrapper() {
     // Typing telemetry
     const [currentText, setCurrentText] = useState("");
     const [startTime, setStartTime] = useState<number | null>(null);
-    const [keystrokes, setKeystrokes] = useState(0);
-    const [deletes, setDeletes] = useState(0);
-    const [eyeDist, setEyeDist] = useState(0);
+    const [live, setLive] = useState<LiveMetrics>({
+        total_keystrokes: 0,
+        deletes: 0,
+        eye_distance_px: 0,
+        vowel_popup_clicks: 0,
+        vowel_popup_more_clicks: 0,
+    });
 
     const [feedback, setFeedback] = useState("");
 
@@ -116,9 +128,13 @@ export default function EvalWrapper() {
         startingRef.current = true;
 
         setCurrentText("");
-        setEyeDist(0);
-        setKeystrokes(0);
-        setDeletes(0);
+        setLive({
+            total_keystrokes: 0,
+            deletes: 0,
+            eye_distance_px: 0,
+            vowel_popup_clicks: 0,
+            vowel_popup_more_clicks: 0,
+        });
         setStartTime(performance.now());
         setPhase("typing");
 
@@ -132,20 +148,29 @@ export default function EvalWrapper() {
         const end = performance.now();
         const durMs = Math.max(0, end - (startTime ?? end));
 
+        // word count by spaces
+        const wordCount = currentText.trim().length
+            ? currentText.trim().split(/\s+/).length
+            : 0;
+
         await submitTrial({
             session_id: session?.session_id,
             participant_id: participant,
             layout_id: currentLayout,
             round_id: `layout${layoutIndex}_round${promptIndex}`,
             prompt_id: `prompt_${promptIndex}`,
-            intended_text: currentPrompt,
+            prompt: currentPrompt,                 // NEW: keep prompt separately
+            intended_text: "",                     // left blank; can be filled later
             transcribed_text: currentText,
             dwell_main_ms: dwellMain,
-            dwell_popup_ms: dwellPopup,
+            dwell_popup_ms: currentLayout === "wijesekara" ? null : dwellPopup,
             duration_ms: durMs,
-            total_keystrokes: keystrokes,
-            deletes,
-            eye_distance_px: eyeDist,
+            total_keystrokes: live.total_keystrokes,
+            deletes: live.deletes,
+            eye_distance_px: live.eye_distance_px,
+            word_count: wordCount,
+            vowel_popup_clicks: live.vowel_popup_clicks,
+            vowel_popup_more_clicks: live.vowel_popup_more_clicks,
         });
 
         if (promptIndex + 1 < totalPromptsThisPhase) {
@@ -358,12 +383,28 @@ export default function EvalWrapper() {
                     <div className="label">
                         Familiarization (adjust dwell as needed) for {currentLayout}
                     </div>
-                    <DwellSliders
-                        main={dwellMain}
-                        popup={dwellPopup}
-                        setMain={setDwellMain}
-                        setPopup={setDwellPopup}
-                    />
+                    {currentLayout?.includes("eyespeak") ? (
+                        <DwellSliders
+                            main={dwellMain}
+                            popup={dwellPopup ?? 450}
+                            setMain={setDwellMain}
+                            setPopup={(v)=>setDwellPopup(v)}
+                        />
+                    ) : (
+                        <div style={{ marginTop: 6 }}>
+                            <div className="label">Main Dwell (ms)</div>
+                            <input
+                                type="range"
+                                min={200}
+                                max={1200}
+                                step={50}
+                                value={dwellMain}
+                                onChange={(e) => setDwellMain(Number(e.target.value))}
+                                style={{ width: "100%", maxWidth: 300 }}
+                            />
+                            <span style={{ marginLeft: 8 }}>{dwellMain} ms</span>
+                        </div>
+                    )}
                     <div style={{ marginTop: 8 }}>
                         <button className="btn primary" onClick={toReady}>
                             Ready
@@ -393,9 +434,9 @@ export default function EvalWrapper() {
                             {currentLayout.includes("eyespeak") ? (
                                 <DwellSliders
                                     main={dwellMain}
-                                    popup={dwellPopup}
+                                    popup={dwellPopup ?? 450}
                                     setMain={setDwellMain}
-                                    setPopup={setDwellPopup}
+                                    setPopup={(v)=>setDwellPopup(v)}
                                 />
                             ) : (
                                 <div style={{ marginTop: 6 }}>
@@ -437,8 +478,11 @@ export default function EvalWrapper() {
                     <KeyboardLoader
                         layoutId={currentLayout}
                         dwellMainMs={dwellMain}
-                        dwellPopupMs={dwellPopup}
-                        onChange={setCurrentText}
+                        dwellPopupMs={currentLayout === "wijesekara" ? 0 : (dwellPopup ?? 450)}
+                        onChange={(text, metrics) => {
+                            setCurrentText(text);
+                            setLive(metrics);
+                        }}
                     />
                     <div style={{ marginTop: 16, alignSelf: "center" }}>
                         <button

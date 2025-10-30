@@ -27,6 +27,14 @@ const controlButtonStyle: React.CSSProperties = {
 const TYPED_ROW_MIN_HEIGHT = 30;
 const SUGGESTION_ROW_HEIGHT = 50;
 
+type Metrics = {
+    total_keystrokes: number;
+    deletes: number;
+    eye_distance_px: number;
+    vowel_popup_clicks: number;       // selecting a vowel option
+    vowel_popup_more_clicks: number;  // tapping More in popup
+};
+
 export default function KeyboardBase({
                                          layout,
                                          dwellMainMs,
@@ -34,7 +42,7 @@ export default function KeyboardBase({
                                          onChange,
                                      }: {
     layout: {
-        columns: number;
+        columns?: number;
         id: string;
         label: string;
         hasVowelPopup: boolean;
@@ -44,7 +52,7 @@ export default function KeyboardBase({
     };
     dwellMainMs: number;
     dwellPopupMs: number;
-    onChange?: (text: string) => void;
+    onChange?: (text: string, metrics: Metrics) => void;
 }) {
     const [typedText, setTypedText] = useState("");
     const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -58,13 +66,29 @@ export default function KeyboardBase({
     const [activeKey, setActiveKey] = useState<string | null>(null);
     const [showBias, setShowBias] = useState(false);
 
+    // ---- NEW: live metrics ----
+    const [totalKeys, setTotalKeys] = useState(0);
+    const [deleteCount, setDeleteCount] = useState(0);
+    const [vowelClicks, setVowelClicks] = useState(0);
+    const [vowelMoreClicks, setVowelMoreClicks] = useState(0);
+
     const containerRef = useRef<HTMLDivElement>(null);
     const [gaze, setGaze] = useState({ x: window.innerWidth / 2, y: 80 }); // safe start
-    const gazeData = useGaze("ws://127.0.0.1:7777");
+    const [eyeDistance, setEyeDistance] = useState(0);
+    const [lastGaze, setLastGaze] = useState<{x:number;y:number}|null>(null);
 
+    const gazeData = useGaze("ws://127.0.0.1:7777");
     useEffect(() => {
-        if (gazeData?.x && gazeData?.y) setGaze(gazeData);
-    }, [gazeData]);
+        if (gazeData?.x != null && gazeData?.y != null) {
+            if (lastGaze) {
+                const dx = gazeData.x - lastGaze.x;
+                const dy = gazeData.y - lastGaze.y;
+                setEyeDistance(prev => prev + Math.sqrt(dx*dx + dy*dy));
+            }
+            setLastGaze({ x: gazeData.x, y: gazeData.y });
+            setGaze(gazeData);
+        }
+    }, [gazeData]); // accumulate gaze distance
 
     const { progress } = useDwell(gaze.x, gaze.y, {
         stabilizationMs: 120,
@@ -76,6 +100,16 @@ export default function KeyboardBase({
 
     // pseudo dwell time derived from progress (0–1)
     const dwellTime = dwellMainMs * progress;
+
+    const emit = (nextText: string) => {
+        onChange?.(nextText, {
+            total_keystrokes: totalKeys,
+            deletes: deleteCount,
+            eye_distance_px: eyeDistance,
+            vowel_popup_clicks: vowelClicks,
+            vowel_popup_more_clicks: vowelMoreClicks,
+        });
+    };
 
     const triggerKeyFlash = (key: string) => {
         setActiveKey(key);
@@ -127,9 +161,11 @@ export default function KeyboardBase({
 
     const handleClick = async (char: string, e: React.MouseEvent) => {
         triggerKeyFlash(char);
+        setTotalKeys(k => k + 1);
+
         const updatedText = typedText + char;
         setTypedText(updatedText);
-        onChange?.(updatedText);
+        emit(updatedText);
 
         const words = updatedText.trim().split(" ");
         const lastPrefix = words[words.length - 1];
@@ -139,20 +175,27 @@ export default function KeyboardBase({
     };
 
     const handleSuggestionClick = (word: string) => {
+        setTotalKeys(k => k + 1);
+
         const parts = typedText.trim().split(" ");
         parts[parts.length - 1] = word;
         const newText = parts.join(" ") + " ";
         setTypedText(newText);
-        onChange?.(newText);
         setSuggestions([]);
         setVowelPopup(null);
+        emit(newText);
     };
 
     const handleVowelSelect = async (vowelChunk: string) => {
+        // selecting a vowel from popup
+        setVowelClicks(v => v + 1);
+        setTotalKeys(k => k + 1);
+
         const newText = typedText.slice(0, -1) + vowelChunk;
         setTypedText(newText);
-        onChange?.(newText);
         setVowelPopup(null);
+        emit(newText);
+
         const lastWord = newText.trim().split(" ").pop() || "";
         await fetchWordPredictions(lastWord);
     };
@@ -179,7 +222,6 @@ export default function KeyboardBase({
     // Compute last row boundaries in the flattened mapping to tag those keys
     const lastRowIndex = Math.max(rows.length - 1, 0);
     const flat = rows.flat();
-    // Determine how many keys are in rows before last to find start index of last row
     const lastRowStartIndex = rows
         .slice(0, lastRowIndex)
         .reduce((acc, r) => acc + r.length, 0);
@@ -273,7 +315,7 @@ export default function KeyboardBase({
                             setTypedText((prev) => {
                                 if (prev.endsWith(char)) {
                                     const updated = prev.slice(0, -1) + secondaryChar;
-                                    onChange?.(updated);
+                                    emit(updated);
                                     return updated;
                                 }
                                 return prev;
@@ -349,6 +391,8 @@ export default function KeyboardBase({
                         triggerKeyFlash(isSecondStage ? "⇠ First Set" : "⇢ Second Set");
                         setIsSecondStage((p) => !p);
                         setVowelPopup(null);
+                        setTotalKeys(k => k + 1);
+                        emit(typedText);
                     }}
                     style={controlButtonStyle}
                 >
@@ -357,9 +401,11 @@ export default function KeyboardBase({
                 <button
                     onClick={() => {
                         triggerKeyFlash("Space");
-                        setTypedText((prev) => prev + " ");
-                        onChange?.((typedText + " "));
+                        const next = typedText + " ";
+                        setTypedText(next);
                         setVowelPopup(null);
+                        setTotalKeys(k => k + 1);
+                        emit(next);
                     }}
                     style={{ ...controlButtonStyle, flex: 2 }}
                 >
@@ -370,8 +416,10 @@ export default function KeyboardBase({
                         triggerKeyFlash("⌫ Delete");
                         const next = typedText.slice(0, -1);
                         setTypedText(next);
-                        onChange?.(next);
                         setVowelPopup(null);
+                        setDeleteCount(d => d + 1);
+                        setTotalKeys(k => k + 1);
+                        emit(next);
                     }}
                     style={controlButtonStyle}
                 >
@@ -388,6 +436,17 @@ export default function KeyboardBase({
                     onSelect={handleVowelSelect}
                     onClose={() => setVowelPopup(null)}
                     position={vowelPopup.position}
+                    onControlClick={(label) => {
+                        if (label === "More") {
+                            setVowelMoreClicks(m => m + 1);
+                            setTotalKeys(k => k + 1);
+                            emit(typedText);
+                        } else {
+                            // Back: counts towards keystrokes too
+                            setTotalKeys(k => k + 1);
+                            emit(typedText);
+                        }
+                    }}
                 />
             )}
 

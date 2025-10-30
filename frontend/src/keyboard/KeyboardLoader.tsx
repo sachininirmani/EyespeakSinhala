@@ -15,6 +15,14 @@ export function getRandomizedLayouts(): LayoutId[] {
     return layouts;
 }
 
+type Metrics = {
+    total_keystrokes: number;
+    deletes: number;
+    eye_distance_px: number;
+    vowel_popup_clicks: number;
+    vowel_popup_more_clicks: number;
+};
+
 /**
  * Dynamically loads and renders the correct keyboard layout.
  * Supports any layout registered in `ALL_KEYBOARDS`.
@@ -27,8 +35,8 @@ export default function KeyboardLoader({
                                        }: {
     layoutId: LayoutId;
     dwellMainMs: number;
-    dwellPopupMs: number;
-    onChange: (text: string) => void;
+    dwellPopupMs: number; // for wijesekara you may pass 0; popup is disabled internally
+    onChange: (text: string, metrics: Metrics) => void;
 }) {
     const layout = ALL_KEYBOARDS.find((l) => l.id === layoutId);
 
