@@ -124,64 +124,46 @@ def init_db():
     # ---- Trigger: recompute net_wpm and accuracy_pct after intended_text is updated ----
     # Uses SQLite JSON1 (bundled in standard SQLite) to split by spaces via a synthetic JSON array.
     cur.execute("""
-        CREATE TRIGGER IF NOT EXISTS update_metrics_after_intended
-        AFTER UPDATE OF intended_text ON trials
-        FOR EACH ROW
-        BEGIN
-            -- Only compute when intended_text is non-empty
-            UPDATE trials
-            SET
-                net_wpm = CASE
-                    WHEN length(trim(NEW.intended_text)) > 0 THEN (
-                        (
-                            -- correct_words
-                            SELECT COUNT(*)
-                            FROM (
-                                SELECT value AS w FROM json_each(
-                                    '["' || REPLACE(NEW.intended_text, ' ', '","') || '"]'
-                                )
-                            )
-                            INTERSECT
-                            SELECT w FROM (
-                                SELECT value AS w FROM json_each(
-                                    '["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'
-                                )
-                            )
-                        ) / (NEW.duration_ms / 60000.0)
-                    )
-                    ELSE NULL
-                END,
-                accuracy_pct = CASE
-                    WHEN length(trim(NEW.intended_text)) > 0 THEN (
-                        100.0 * (
-                            (
-                                SELECT COUNT(*)
-                                FROM (
-                                    SELECT value AS w FROM json_each(
-                                        '["' || REPLACE(NEW.intended_text, ' ', '","') || '"]'
-                                    )
-                                )
-                                INTERSECT
-                                SELECT w FROM (
-                                    SELECT value AS w FROM json_each(
-                                        '["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'
-                                    )
-                                )
-                            )
-                        ) / NULLIF((
-                            SELECT COUNT(*)
-                            FROM (
-                                SELECT value AS w FROM json_each(
-                                    '["' || REPLACE(NEW.intended_text, ' ', '","') || '"]'
-                                )
-                            )
-                        ), 0)
-                    )
-                    ELSE NULL
-                END
-            WHERE id = NEW.id;
-        END;
-    """)
+                CREATE TRIGGER IF NOT EXISTS update_metrics_after_intended
+                    AFTER UPDATE OF intended_text
+                    ON trials
+                    FOR EACH ROW
+                BEGIN
+                    -- Only run when intended_text is non-empty
+                    UPDATE trials
+                    SET net_wpm      = CASE
+                                           WHEN length(trim(NEW.intended_text)) > 0 THEN
+                                               (
+                                                   -- count of correct words / duration(min)
+                                                   COALESCE((SELECT COUNT(*)
+                                                             FROM (SELECT value AS w
+                                                                   FROM json_each('["' || REPLACE(NEW.intended_text, ' ', '","') || '"]')
+                                                                   INTERSECT
+                                                                   SELECT value AS w
+                                                                   FROM json_each('["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'))),
+                                                            0) / NULLIF(NEW.duration_ms / 60000.0, 0)
+                                                   )
+                                           ELSE NULL
+                        END,
+                        accuracy_pct = CASE
+                                           WHEN length(trim(NEW.intended_text)) > 0 THEN
+                                               (
+                                                   100.0 * COALESCE((SELECT COUNT(*)
+                                                                     FROM (SELECT value AS w
+                                                                           FROM json_each('["' || REPLACE(NEW.intended_text, ' ', '","') || '"]')
+                                                                           INTERSECT
+                                                                           SELECT value AS w
+                                                                           FROM json_each('["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'))),
+                                                                    0)
+                                                       / NULLIF((SELECT COUNT(*)
+                                                                 FROM json_each('["' || REPLACE(NEW.intended_text, ' ', '","') || '"]')),
+                                                                0)
+                                                   )
+                                           ELSE NULL
+                            END
+                    WHERE id = NEW.id;
+                END;
+                """)
 
     conn.commit()
     conn.close()
