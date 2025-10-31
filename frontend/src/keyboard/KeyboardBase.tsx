@@ -6,6 +6,7 @@ import { useDwell } from "../gaze/useDwell";
 import GazeIndicator from "../gaze/GazeIndicator";
 import BiasTuner from "../gaze/BiasTuner";
 
+/** Number & punctuation overlays (unchanged) */
 const numbers = [
     ["1", "2", "3", "4", "5", "6"],
     ["7", "8", "9", "0", "(", ")"],
@@ -15,6 +16,7 @@ const punctuation = [
     ['"', "'", "’", "“", "”", "…"],
 ];
 
+/** Style for control buttons (unchanged) */
 const controlButtonStyle: React.CSSProperties = {
     padding: "16px",
     fontSize: "22px",
@@ -24,15 +26,30 @@ const controlButtonStyle: React.CSSProperties = {
     transition: "background-color 0.2s ease",
 };
 
+/** Layout constants */
 const TYPED_ROW_MIN_HEIGHT = 30;
 const SUGGESTION_ROW_HEIGHT = 50;
+
+/**
+ * Sinhala vowel + diacritic combination map
+ * Combines vowel and diacritic into a single independent vowel
+ */
+const COMBINATION_MAP: Record<string, string> = {
+    "අා": "ආ",
+    "අැ": "ඇ",
+    "අෑ": "ඈ",
+    "එ්": "ඒ",
+    "ඔ්": "ඕ",
+    "ඔෟ": "ඖ",
+    "උෟ": "ඌ",
+};
 
 type Metrics = {
     total_keystrokes: number;
     deletes: number;
     eye_distance_px: number;
-    vowel_popup_clicks: number;       // selecting a vowel option
-    vowel_popup_more_clicks: number;  // tapping More in popup
+    vowel_popup_clicks: number;
+    vowel_popup_more_clicks: number;
 };
 
 export default function KeyboardBase({
@@ -54,6 +71,7 @@ export default function KeyboardBase({
     dwellPopupMs: number;
     onChange?: (text: string, metrics: Metrics) => void;
 }) {
+    // ---------- STATE ----------
     const [typedText, setTypedText] = useState("");
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [isSecondStage, setIsSecondStage] = useState(false);
@@ -66,16 +84,17 @@ export default function KeyboardBase({
     const [activeKey, setActiveKey] = useState<string | null>(null);
     const [showBias, setShowBias] = useState(false);
 
-    // ---- NEW: live metrics ----
     const [totalKeys, setTotalKeys] = useState(0);
     const [deleteCount, setDeleteCount] = useState(0);
     const [vowelClicks, setVowelClicks] = useState(0);
     const [vowelMoreClicks, setVowelMoreClicks] = useState(0);
 
     const containerRef = useRef<HTMLDivElement>(null);
-    const [gaze, setGaze] = useState({ x: window.innerWidth / 2, y: 80 }); // safe start
+    const [gaze, setGaze] = useState({ x: window.innerWidth / 2, y: 80 });
     const [eyeDistance, setEyeDistance] = useState(0);
-    const [lastGaze, setLastGaze] = useState<{x:number;y:number}|null>(null);
+    const [lastGaze, setLastGaze] = useState<{ x: number; y: number } | null>(
+        null
+    );
 
     const gazeData = useGaze("ws://127.0.0.1:7777");
     useEffect(() => {
@@ -83,12 +102,12 @@ export default function KeyboardBase({
             if (lastGaze) {
                 const dx = gazeData.x - lastGaze.x;
                 const dy = gazeData.y - lastGaze.y;
-                setEyeDistance(prev => prev + Math.sqrt(dx*dx + dy*dy));
+                setEyeDistance((prev) => prev + Math.sqrt(dx * dx + dy * dy));
             }
             setLastGaze({ x: gazeData.x, y: gazeData.y });
             setGaze(gazeData);
         }
-    }, [gazeData]); // accumulate gaze distance
+    }, [gazeData, lastGaze]);
 
     const { progress } = useDwell(gaze.x, gaze.y, {
         stabilizationMs: 120,
@@ -98,7 +117,6 @@ export default function KeyboardBase({
         refractoryMs: 200,
     });
 
-    // pseudo dwell time derived from progress (0–1)
     const dwellTime = dwellMainMs * progress;
 
     const emit = (nextText: string) => {
@@ -159,24 +177,40 @@ export default function KeyboardBase({
         }
     };
 
-    const handleClick = async (char: string, e: React.MouseEvent) => {
+    // ---------- KEY ACTIVATION ----------
+    const appendWithSinhalaCompose = (nextChar: string) => {
+        let newText = typedText + nextChar;
+        const lastTwo = newText.slice(-2);
+        const composed = COMBINATION_MAP[lastTwo];
+        if (composed) {
+            newText = newText.slice(0, -2) + composed;
+        }
+        setTypedText(newText);
+        emit(newText);
+    };
+
+    const chooseWijesekaraChar = (char: string) => {
+        const secondary = layout.primarySecondaryMap?.[char];
+        if (!secondary) return char;
+        return dwellTime >= 2 * dwellMainMs ? secondary : char;
+    };
+
+    const handleKeyPress = async (char: string, e: React.MouseEvent) => {
         triggerKeyFlash(char);
-        setTotalKeys(k => k + 1);
+        setTotalKeys((k) => k + 1);
+        const chosen =
+            layout.id === "wijesekara" ? chooseWijesekaraChar(char) : char;
+        appendWithSinhalaCompose(chosen);
 
-        const updatedText = typedText + char;
-        setTypedText(updatedText);
-        emit(updatedText);
-
-        const words = updatedText.trim().split(" ");
+        const words = (typedText + chosen).trim().split(" ");
         const lastPrefix = words[words.length - 1];
 
         await fetchWordPredictions(lastPrefix);
-        if (layout.hasVowelPopup) await fetchVowelPredictions(lastPrefix, char, e);
+        if (layout.hasVowelPopup) await fetchVowelPredictions(lastPrefix, chosen, e);
     };
 
     const handleSuggestionClick = (word: string) => {
-        setTotalKeys(k => k + 1);
-
+        setTotalKeys((k) => k + 1);
         const parts = typedText.trim().split(" ");
         parts[parts.length - 1] = word;
         const newText = parts.join(" ") + " ";
@@ -187,45 +221,30 @@ export default function KeyboardBase({
     };
 
     const handleVowelSelect = async (vowelChunk: string) => {
-        // selecting a vowel from popup
-        setVowelClicks(v => v + 1);
-        setTotalKeys(k => k + 1);
-
+        setVowelClicks((v) => v + 1);
+        setTotalKeys((k) => k + 1);
         const newText = typedText.slice(0, -1) + vowelChunk;
         setTypedText(newText);
         setVowelPopup(null);
         emit(newText);
-
         const lastWord = newText.trim().split(" ").pop() || "";
         await fetchWordPredictions(lastWord);
     };
 
-    // ---- v2-only optimization: hide FIRST-SET last row (vowels) after first char in a word ----
-    const rows = getCurrentLayout(); // matrix (rows x cols)
+    // ---------- EYESPEAK V2: vowel-row hiding logic (restored) ----------
+    const rows = getCurrentLayout();
     const columns = layout.columns ?? 6;
 
-    // Only apply when:
-    // - layout is eyespeak_v2
-    // - we are on the first set (not second, not numbers, not punctuation)
+    // Active when we are on eyespeak_v2, first set, and not in numbers/punctuation
     const isV2FirstSetActive =
         layout.id === "eyespeak_v2" &&
         !isSecondStage &&
         !showNumbers &&
         !showPunctuation;
 
-    const lastWord = (typedText.split(" ").pop() ?? "");
-    const wordHasAtLeastOneChar = lastWord.length > 0;
-
-    // Hide when already typed >= 1 character in current word
-    const shouldHideVowelRow = isV2FirstSetActive && wordHasAtLeastOneChar;
-
-    // Compute last row boundaries in the flattened mapping to tag those keys
-    const lastRowIndex = Math.max(rows.length - 1, 0);
-    const flat = rows.flat();
-    const lastRowStartIndex = rows
-        .slice(0, lastRowIndex)
-        .reduce((acc, r) => acc + r.length, 0);
-    const lastRowEndIndexExclusive = lastRowStartIndex + (rows[lastRowIndex]?.length ?? 0);
+    // Hide the last row (vowel row) when the current word has at least one character
+    const currentLastWord = (typedText.split(" ").pop() ?? "");
+    const shouldHideVowelRow = isV2FirstSetActive && currentLastWord.length > 0;
 
     return (
         <div
@@ -237,6 +256,7 @@ export default function KeyboardBase({
                 maxWidth: "100%",
             }}
         >
+            {/* Typed text */}
             <div
                 style={{
                     marginBottom: 10,
@@ -249,7 +269,7 @@ export default function KeyboardBase({
                 <strong>Typed Text:&nbsp;</strong> <span>{typedText}</span>
             </div>
 
-            {/* suggestion bar */}
+            {/* Suggestion bar */}
             <div
                 style={{
                     height: SUGGESTION_ROW_HEIGHT,
@@ -288,148 +308,199 @@ export default function KeyboardBase({
                 )}
             </div>
 
-            {/* main grid */}
-            <div
-                style={{
-                    display: "grid",
-                    gridTemplateColumns: `repeat(${columns}, 1fr)`,
-                    gap: 10,
-                    marginBottom: 16,
-                }}
-            >
-                {flat.map((char, index) => {
-                    const secondaryChar =
-                        layout.id === "wijesekara"
-                            ? layout.primarySecondaryMap?.[char]
-                            : null;
-                    const isDual = !!secondaryChar;
-                    const isExtended =
-                        layout.id === "wijesekara" &&
-                        isDual &&
-                        dwellTime > dwellMainMs * 1.5 &&
-                        activeKey === char;
+            {/* Main keyboard: per-row rendering so we can handle both rules:
+          - Wijesekara last row centering
+          - Eyespeak v2 last row hiding (first set only, after first char) */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+                {rows.map((row, rowIdx) => {
+                    const isLastRow = rowIdx === rows.length - 1;
 
-                    // replace last typed primary with secondary during long dwell
-                    useEffect(() => {
-                        if (isExtended && isDual) {
-                            setTypedText((prev) => {
-                                if (prev.endsWith(char)) {
-                                    const updated = prev.slice(0, -1) + secondaryChar;
-                                    emit(updated);
-                                    return updated;
-                                }
-                                return prev;
-                            });
-                        }
-                    }, [isExtended]);
+                    // --- Wijesekara LAST ROW: center 8 keys within a 10-col grid (same widths as other rows) ---
+                    if (layout.id === "wijesekara" && isLastRow) {
+                        const totalColumns = 10; // other wijesekara rows have 10 columns
+                        const emptySlots = totalColumns - row.length;
 
-                    // Determine if this key belongs to the FIRST-SET last row (vowel row)
-                    const isKeyInFirstSetLastRow =
-                        index >= lastRowStartIndex && index < lastRowEndIndexExclusive;
+                        return (
+                            <div
+                                key={`row-${rowIdx}`}
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns: `repeat(${totalColumns}, 1fr)`,
+                                    gap: 10,
+                                    justifyItems: "center",
+                                }}
+                            >
+                                {/* Left padding slots */}
+                                {Array.from({ length: Math.floor(emptySlots / 2) }).map((_, i) => (
+                                    <div key={`pad-left-${i}`} />
+                                ))}
 
-                    // Hide condition: only for v2 first set + vowel row after first char entered
-                    const hideThisKey = shouldHideVowelRow && isKeyInFirstSetLastRow;
+                                {/* Actual keys */}
+                                {row.map((char, colIdx) => {
+                                    const secondaryChar =
+                                        layout.id === "wijesekara"
+                                            ? layout.primarySecondaryMap?.[char]
+                                            : null;
+                                    const isDual = !!secondaryChar;
 
+                                    return (
+                                        <button
+                                            key={`key-${rowIdx}-${colIdx}`}
+                                            onClick={(e) => handleKeyPress(char, e)}
+                                            style={{
+                                                position: "relative",
+                                                padding: "16px",
+                                                fontSize: "26px",
+                                                borderRadius: 8,
+                                                transition: "all 0.15s ease",
+                                                backgroundColor:
+                                                    activeKey === char ? "#b3e6ff" : "#fdfdfd",
+                                                border: "1px solid #ccc",
+                                                width: "100%",
+                                            }}
+                                        >
+                                            <span>{char}</span>
+                                            {isDual && (
+                                                <span
+                                                    style={{
+                                                        position: "absolute",
+                                                        top: 4,
+                                                        right: 6,
+                                                        fontSize: "16px",
+                                                        opacity: 0.8,
+                                                        color: "#555",
+                                                    }}
+                                                >
+                          {secondaryChar}
+                        </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+
+                                {/* Right padding slots */}
+                                {Array.from({
+                                    length: emptySlots - Math.floor(emptySlots / 2),
+                                }).map((_, i) => (
+                                    <div key={`pad-right-${i}`} />
+                                ))}
+                            </div>
+                        );
+                    }
+
+                    // --- Default rendering for all other layouts (including Eyespeak v1/v2) ---
                     return (
-                        <button
-                            key={index}
-                            onClick={(e) => handleClick(char, e)}
+                        <div
+                            key={`row-${rowIdx}`}
                             style={{
-                                position: "relative",
-                                padding: "16px",
-                                fontSize: isExtended && isDual ? "20px" : "26px",
-                                borderRadius: 8,
-                                transition: "all 0.15s ease",
-                                backgroundColor:
-                                    activeKey === char
-                                        ? isExtended
-                                            ? "#ffd6d6"
-                                            : "#b3e6ff"
-                                        : "#fdfdfd",
-                                border: "1px solid #ccc",
-                                // Keep the grid row height constant while "hiding"
-                                visibility: hideThisKey ? "hidden" : "visible",
-                                pointerEvents: hideThisKey ? "none" : "auto",
+                                display: "grid",
+                                gridTemplateColumns: `repeat(${row.length}, 1fr)`,
+                                gap: 10,
                             }}
-                            aria-hidden={hideThisKey}
-                            tabIndex={hideThisKey ? -1 : 0}
                         >
-              <span
-                  style={{
-                      fontSize: isExtended && isDual ? "20px" : "30px",
-                      opacity: isExtended && isDual ? 0.5 : 1,
-                  }}
-              >
-                {char}
-              </span>
+                            {row.map((char, colIdx) => {
+                                const secondaryChar =
+                                    layout.id === "wijesekara"
+                                        ? layout.primarySecondaryMap?.[char]
+                                        : null;
+                                const isDual = !!secondaryChar;
 
-                            {isDual && (
-                                <span
-                                    style={{
-                                        position: "absolute",
-                                        top: 4,
-                                        right: 6,
-                                        fontSize: isExtended ? "28px" : "16px",
-                                        fontWeight: isExtended ? 600 : 400,
-                                        color: isExtended ? "#111" : "#555",
-                                        opacity: isExtended ? 1 : 0.8,
-                                        transition: "all 0.1s ease",
-                                    }}
-                                >
-                  {secondaryChar}
-                </span>
-                            )}
-                        </button>
+                                // Eyespeak v2: hide *last row* of first-set vowel row AFTER first char typed in current word
+                                const hideThisKey = shouldHideVowelRow && isLastRow;
+
+                                return (
+                                    <button
+                                        key={`key-${rowIdx}-${colIdx}`}
+                                        onClick={(e) => handleKeyPress(char, e)}
+                                        style={{
+                                            position: "relative",
+                                            padding: "16px",
+                                            fontSize: "26px",
+                                            borderRadius: 8,
+                                            transition: "all 0.15s ease",
+                                            backgroundColor:
+                                                activeKey === char ? "#b3e6ff" : "#fdfdfd",
+                                            border: "1px solid #ccc",
+                                            // Keep row height/width the same while hiding the key
+                                            visibility: hideThisKey ? "hidden" : "visible",
+                                            pointerEvents: hideThisKey ? "none" : "auto",
+                                        }}
+                                        aria-hidden={hideThisKey}
+                                        tabIndex={hideThisKey ? -1 : 0}
+                                    >
+                                        <span>{char}</span>
+                                        {isDual && (
+                                            <span
+                                                style={{
+                                                    position: "absolute",
+                                                    top: 4,
+                                                    right: 6,
+                                                    fontSize: "16px",
+                                                    opacity: 0.8,
+                                                    color: "#555",
+                                                }}
+                                            >
+                        {secondaryChar}
+                      </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
                     );
                 })}
             </div>
 
-            {/* controls */}
+            {/* Controls (unchanged) */}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <button
                     onClick={() => {
                         triggerKeyFlash(isSecondStage ? "⇠ First Set" : "⇢ Second Set");
                         setIsSecondStage((p) => !p);
                         setVowelPopup(null);
-                        setTotalKeys(k => k + 1);
+                        setTotalKeys((k) => k + 1);
                         emit(typedText);
                     }}
                     style={controlButtonStyle}
                 >
                     {isSecondStage ? "⇠ First Set" : "⇢ Second Set"}
                 </button>
+
                 <button
                     onClick={() => {
                         triggerKeyFlash("Space");
                         const next = typedText + " ";
                         setTypedText(next);
                         setVowelPopup(null);
-                        setTotalKeys(k => k + 1);
+                        setTotalKeys((k) => k + 1);
                         emit(next);
                     }}
                     style={{ ...controlButtonStyle, flex: 2 }}
                 >
                     Space
                 </button>
+
                 <button
                     onClick={() => {
                         triggerKeyFlash("⌫ Delete");
                         const next = typedText.slice(0, -1);
                         setTypedText(next);
                         setVowelPopup(null);
-                        setDeleteCount(d => d + 1);
-                        setTotalKeys(k => k + 1);
+                        setDeleteCount((d) => d + 1);
+                        setTotalKeys((k) => k + 1);
                         emit(next);
                     }}
                     style={controlButtonStyle}
                 >
                     ⌫ Delete
                 </button>
+
                 <button onClick={() => setShowBias(true)} style={controlButtonStyle}>
                     Bias Adjust
                 </button>
             </div>
 
+            {/* Vowel popup */}
             {layout.hasVowelPopup && vowelPopup && (
                 <VowelPopup
                     predictions={vowelPopup.options}
@@ -438,12 +509,11 @@ export default function KeyboardBase({
                     position={vowelPopup.position}
                     onControlClick={(label) => {
                         if (label === "More") {
-                            setVowelMoreClicks(m => m + 1);
-                            setTotalKeys(k => k + 1);
+                            setVowelMoreClicks((m) => m + 1);
+                            setTotalKeys((k) => k + 1);
                             emit(typedText);
                         } else {
-                            // Back: counts towards keystrokes too
-                            setTotalKeys(k => k + 1);
+                            setTotalKeys((k) => k + 1);
                             emit(typedText);
                         }
                     }}
@@ -457,7 +527,7 @@ export default function KeyboardBase({
                 y={gaze.y}
                 progress={progress}
                 color={
-                    layout.id === "wijesekara" && dwellTime > dwellMainMs * 1.5
+                    layout.id === "wijesekara" && dwellTime >= 2 * dwellMainMs
                         ? "#ff7675"
                         : "#3b82f6"
                 }

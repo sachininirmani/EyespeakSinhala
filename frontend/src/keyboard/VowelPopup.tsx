@@ -67,7 +67,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
             style={{
                 position: "absolute",
                 top: position.top - radius + buttonSize / 2,
-                left: position.left - radius + buttonSize / 2,
+                left: position.left - radius / 2 ,
                 width: radius * 2,
                 height: radius * 2,
                 borderRadius: "50%",
