@@ -96,7 +96,7 @@ export default function KeyboardBase({
         null
     );
 
-    const gazeData = useGaze("ws://127.0.0.1:7777");
+    const gazeData = useGaze();
     useEffect(() => {
         if (gazeData?.x != null && gazeData?.y != null) {
             if (lastGaze) {
