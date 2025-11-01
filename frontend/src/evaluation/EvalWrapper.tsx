@@ -331,18 +331,19 @@ export default function EvalWrapper() {
                                 justifyContent: "center",
                             }}
                         >
-                            <h3>Horizontal & Vertical Bias Calibration</h3>
-                            <p style={{ textAlign: "center", maxWidth: 400 }}>
-                                Look at each dot on the screen as instructed. The system will
-                                compute your gaze bias and store it automatically for this
-                                session.
+                            <h3>Quick Gaze Calibration (≈5 seconds)</h3>
+                            <p style={{ textAlign: "center", maxWidth: 480 }}>
+                                Look briefly at each dot as it appears. We’ll compute a best-fit
+                                transform automatically and apply it to your gaze for this session.
+                                You’ll see your live gaze dot during calibration. Press <b>M</b> to
+                                toggle mouse fallback if needed.
                             </p>
                             <button
                                 className="btn primary"
                                 onClick={() => setShowCalibration(true)}
                                 style={{ marginTop: 24 }}
                             >
-                                Continue
+                                Start Calibration
                             </button>
                         </div>
                     )}
@@ -357,6 +358,8 @@ export default function EvalWrapper() {
                     )}
                 </>
             )}
+            ...
+
 
             {/* ---------------- STATUS BAR ---------------- */}
             {phase !== "setup" && phase !== "biascalibration" && phase !== "done" && (
