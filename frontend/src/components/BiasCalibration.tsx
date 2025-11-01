@@ -24,6 +24,11 @@ const ALLOWED_RADIUS_PX = 140;   // acceptance circle (px)
 const MAX_SAMPLES = 18;          // cap samples per point to keep it quick
 
 export default function BiasCalibration({ onDone }: { onDone: () => void }) {
+    // 🧹 Clear old biases before starting a new calibration
+    useEffect(() => {
+        localStorage.removeItem("gazeBias");
+    }, []);
+
     const gaze = useGaze(); // returns pixel-corrected gaze (but we need RAW normalized too)
     const [idx, setIdx] = useState(0);
     const [running, setRunning] = useState(true);

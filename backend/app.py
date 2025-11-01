@@ -196,13 +196,14 @@ with open(os.path.join(DATA_DIR, "vowel_bigrams.json"), "r", encoding="utf-8") a
 with open(os.path.join(DATA_DIR, "vowel_combination_map_Most_Used.json"), "r", encoding="utf-8") as f:
     vowel_prediction_map = json.load(f)
 
-@app.get("/predict/word")
-def predict_word():
-    prefix = request.args.get("prefix", "")
-    if not prefix:
-        return jsonify([])
-    predictions = [w for w in corpus_words if w.startswith(prefix)]
-    return jsonify(predictions[:5])
+# commented the word prediction out for now
+# @app.get("/predict/word")
+# def predict_word():
+#     prefix = request.args.get("prefix", "")
+#     if not prefix:
+#         return jsonify([])
+#     predictions = [w for w in corpus_words if w.startswith(prefix)]
+#     return jsonify(predictions[:5])
 
 @app.get("/predict/vowel")
 def predict_vowel():

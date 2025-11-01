@@ -36,10 +36,10 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
         return null;
     }, [page, hasSecondPage, hasThirdPage]);
 
-    const radius = 170;
-    const innerRadius = radius * 0.62;
-    const buttonSize = 82;
-    const fontSize = 28;
+    const radius = 200;
+    const innerRadius = radius * 0.65;
+    const buttonSize = 90;
+    const fontSize = 26;
 
     const options = controlLabel ? [...pageItems, controlLabel] : pageItems;
     const angleStep = (2 * Math.PI) / Math.max(options.length, 1);
