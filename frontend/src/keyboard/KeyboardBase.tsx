@@ -44,6 +44,109 @@ const COMBINATION_MAP: Record<string, string> = {
     "උෟ": "ඌ",
 };
 
+const PURE_VOWELS = new Set([
+    "ඊ", "ඉ", "අ", "එ", "උ", "ඔ", "ඍ", "ඏ", "ං"
+]);
+
+/**
+ * UNIVERSAL SINHALA DIACRITIC PATTERNS
+ *
+ * These are NOT per-consonant lists.
+ * They are generic suffix patterns we can apply to ANY base consonant
+ * or consonant cluster (e.g., "ක", "ක්‍ර", "ස්ත").
+ *
+ * We keep them as suffixes so the same patterns work for every consonant.
+ * Unicode shaping will handle the correct glyph reordering.
+ */
+
+// Plain vowel + sign patterns relative to a base consonant.
+// Includes:
+//  - hal sign (්)
+//  - inherent vowel (no extra sign, represented by "")
+//  - long/short vowels
+//  - reph forms like e/ē/ai/o/ō/au (as dependent signs)
+//  - anusvara (ං) and visarga (ඃ)
+const PLAIN_SUFFIXES: string[] = [
+    "්",  // hal kireema (e.g., "ක්")
+    "",   // bare consonant (e.g., "ක")
+    "ා",
+    "ැ",
+    "ෑ",
+    "ි",
+    "ී",
+    "ු",
+    "ූ",
+    "ෘ",
+    "ෲ",
+    "ෙ",
+    "ේ",
+    "ෛ",
+    "ො",
+    "ෝ",
+    "ෞ",
+    "ං",
+    "ඃ",
+];
+
+// Rakaransaya patterns (්‍ර + optional vowel signs)
+const RAKA_SUFFIX_BASE = "්‍ර";
+const RAKA_VOWEL_SUFFIXES: string[] = [
+    "",   // ක්‍ර
+    "ා",  // ක්‍රා
+    "ැ",  // ක්‍රැ
+    "ෑ",  // ක්‍රෑ (rare but allowed)
+    "ි",  // ක්‍රි
+    "ී",  // ක්‍රී
+    "ෙ",  // ක්‍රෙ
+    "ේ",  // ක්‍රේ
+    "ො",  // ක්‍රො
+    "ෝ",  // ක්‍රෝ
+];
+
+// Yansaya patterns (්‍ය + optional vowel signs)
+const YANSA_SUFFIX_BASE = "්‍ය";
+const YANSA_VOWEL_SUFFIXES: string[] = [
+    "",   // ක්‍ය
+    "ා",  // ක්‍යා
+    "ු",
+    "ූ",
+    "ැ",
+    "ෑ",
+    "ෙ",
+    "ේ",
+    "ො",
+    "ෝ",
+];
+
+/**
+ * Given ANY base consonant or cluster (e.g., "ක", "ක්‍ර", "ස්ත්‍ර"),
+ * generate all possible diacritic formations by applying the above suffix sets.
+ *
+ * This is consonant-agnostic: the same suffix patterns are reused for all bases.
+ */
+function buildAllDiacriticsForBase(base: string): string[] {
+    const forms = new Set<string>();
+
+    // 1. Plain suffixes: base + each plain suffix
+    for (const suf of PLAIN_SUFFIXES) {
+        forms.add(base + suf);
+    }
+
+    // 2. Rakaransaya: (base + "්‍ර") + vowel suffixes
+    const rakaBase = base + RAKA_SUFFIX_BASE;
+    for (const suf of RAKA_VOWEL_SUFFIXES) {
+        forms.add(rakaBase + suf);
+    }
+
+    // 3. Yansaya: (base + "්‍ය") + vowel suffixes
+    const yansaBase = base + YANSA_SUFFIX_BASE;
+    for (const suf of YANSA_VOWEL_SUFFIXES) {
+        forms.add(yansaBase + suf);
+    }
+
+    return Array.from(forms);
+}
+
 type Metrics = {
     total_keystrokes: number;
     deletes: number;
@@ -146,34 +249,83 @@ export default function KeyboardBase({
                 params: { prefix },
             });
             setSuggestions(res.data);
-        } catch {}
+        } catch {
+            // silently ignore prediction errors for now
+        }
     };
 
+    /**
+     * Fetch vowel diacritic predictions from the backend AND
+     * augment them with all dynamically generated Sinhala diacritic formations
+     * for the given base consonant/cluster.
+     *
+     * - Backend provides most probable ~30 diacritics (from corpus JSON files)
+     * - We generate the full space of diacritics using Unicode suffix patterns
+     * - We merge them: corpus-first, then remaining forms, with no duplicates
+     * - VowelPopup will then paginate them (6 per stage, etc.)
+     */
     const fetchVowelPredictions = async (
         prefix: string,
         char: string,
         e: React.MouseEvent
     ) => {
-        try {
-            const vowelRes = await axios.get("http://localhost:5000/predict/vowel", {
-                params: { prefix, current: char },
-            });
-            if (
-                Array.isArray(vowelRes.data) &&
-                vowelRes.data.length > 0 &&
-                containerRef.current
-            ) {
+        // char is the base consonant / cluster the user just typed (e.g., "ක", "ක්‍ර")
+        const base = char;
+
+        // Do NOT generate extra diacritics for vowels ----
+        const isPureVowel = PURE_VOWELS.has(base);
+
+        // If it's a vowel → DO NOT build dynamic diacritics
+        const dynamicAll = isPureVowel ? [] : buildAllDiacriticsForBase(base);
+
+
+        const buildAndShowPopup = (corpusList: string[]) => {
+            // Ensure uniqueness while keeping corpus order first.
+            const seen = new Set<string>();
+            const ordered: string[] = [];
+
+            // 1. corpus suggestions (from JSON/backend)
+            for (const form of corpusList) {
+                if (!seen.has(form)) {
+                    seen.add(form);
+                    ordered.push(form);
+                }
+            }
+            // 2. remaining dynamic forms (not in corpus)
+            for (const form of dynamicAll) {
+                if (!seen.has(form)) {
+                    seen.add(form);
+                    ordered.push(form);
+                }
+            }
+
+            if (ordered.length > 0 && containerRef.current) {
                 const rect = (e.target as HTMLElement).getBoundingClientRect();
                 setVowelPopup({
-                    options: vowelRes.data,
+                    options: ordered,
                     position: {
                         top: rect.top - containerRef.current.offsetTop,
                         left: rect.left - containerRef.current.offsetLeft,
                     },
                 });
-            } else setVowelPopup(null);
+            } else {
+                setVowelPopup(null);
+            }
+        };
+
+        try {
+            const vowelRes = await axios.get("http://localhost:5000/predict/vowel", {
+                params: { prefix, current: char },
+            });
+
+            const corpusList = Array.isArray(vowelRes.data)
+                ? (vowelRes.data as string[])
+                : [];
+
+            buildAndShowPopup(corpusList);
         } catch {
-            setVowelPopup(null);
+            // If backend fails, still allow typing by using dynamic diacritics only.
+            buildAndShowPopup([]);
         }
     };
 
@@ -236,15 +388,15 @@ export default function KeyboardBase({
     const columns = layout.columns ?? 6;
 
     // Active when we are on eyespeak_v2, first set, and not in numbers/punctuation
-    const isV2FirstSetActive =
-        layout.id === "eyespeak_v2" &&
+    const isV2V3FirstSetActive =
+        (layout.id === "eyespeak_v2" || layout.id === "eyespeak_v3") &&
         !isSecondStage &&
         !showNumbers &&
         !showPunctuation;
 
     // Hide the last row (vowel row) when the current word has at least one character
     const currentLastWord = (typedText.split(" ").pop() ?? "");
-    const shouldHideVowelRow = isV2FirstSetActive && currentLastWord.length > 0;
+    const shouldHideVowelRow = isV2V3FirstSetActive && currentLastWord.length > 0;
 
     return (
         <div
@@ -287,8 +439,8 @@ export default function KeyboardBase({
             >
                 {suggestions.length === 0 ? (
                     <span style={{ color: "#94a3b8", fontStyle: "italic" }}>
-            Suggestions will appear here…
-          </span>
+                        Suggestions will appear here…
+                    </span>
                 ) : (
                     suggestions.map((word, i) => (
                         <button
@@ -308,14 +460,12 @@ export default function KeyboardBase({
                 )}
             </div>
 
-            {/* Main keyboard: per-row rendering so we can handle both rules:
-          - Wijesekara last row centering
-          - Eyespeak v2 last row hiding (first set only, after first char) */}
+            {/* Main keyboard (unchanged logic, including eyespeak_v2 row hiding and wijesekara last row centering) */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
                 {rows.map((row, rowIdx) => {
                     const isLastRow = rowIdx === rows.length - 1;
 
-                    // --- Wijesekara LAST ROW: center 8 keys within a 10-col grid (same widths as other rows) ---
+                    // --- Wijesekara LAST ROW: center 8 keys within a 10-col grid ---
                     if (layout.id === "wijesekara" && isLastRow) {
                         const totalColumns = 10; // other wijesekara rows have 10 columns
                         const emptySlots = totalColumns - row.length;
@@ -371,8 +521,8 @@ export default function KeyboardBase({
                                                         color: "#555",
                                                     }}
                                                 >
-                          {secondaryChar}
-                        </span>
+                                                    {secondaryChar}
+                                                </span>
                                             )}
                                         </button>
                                     );
@@ -440,8 +590,8 @@ export default function KeyboardBase({
                                                     color: "#555",
                                                 }}
                                             >
-                        {secondaryChar}
-                      </span>
+                                                {secondaryChar}
+                                            </span>
                                         )}
                                     </button>
                                 );
@@ -500,7 +650,7 @@ export default function KeyboardBase({
                 </button>
             </div>
 
-            {/* Vowel popup */}
+            {/* Vowel popup (eyespeak only; wijesekara has hasVowelPopup = false) */}
             {layout.hasVowelPopup && vowelPopup && (
                 <VowelPopup
                     predictions={vowelPopup.options}
@@ -513,6 +663,7 @@ export default function KeyboardBase({
                             setTotalKeys((k) => k + 1);
                             emit(typedText);
                         } else {
+                            // "Back"
                             setTotalKeys((k) => k + 1);
                             emit(typedText);
                         }
