@@ -45,7 +45,7 @@ const COMBINATION_MAP: Record<string, string> = {
 };
 
 const PURE_VOWELS = new Set([
-    "ඊ", "ඉ", "අ", "එ", "උ", "ඔ", "ඍ", "ඏ", "ං"
+    "ඊ", "ඉ", "අ", "එ", "උ", "ඔ", "ඍ", "ඏ", "ං", "ආ", "ඇ", "ඈ", "ඒ", "ඕ", "ඖ", "ඌ", "ඐ", "ඎ", "ඃ"
 ]);
 
 /**
@@ -127,25 +127,34 @@ const YANSA_VOWEL_SUFFIXES: string[] = [
 function buildAllDiacriticsForBase(base: string): string[] {
     const forms = new Set<string>();
 
-    // 1. Plain suffixes: base + each plain suffix
+    // --- Lists provided by you ---
+    const RAKARANSHAYA_BLOCK = new Set(["න", "ය", "ර", "ල"]);
+    const YANSAYA_BLOCK = new Set(["ය", "ර", "ප"]);
+
+    // 1. ALWAYS add plain suffixes
     for (const suf of PLAIN_SUFFIXES) {
         forms.add(base + suf);
     }
 
-    // 2. Rakaransaya: (base + "්‍ර") + vowel suffixes
-    const rakaBase = base + RAKA_SUFFIX_BASE;
-    for (const suf of RAKA_VOWEL_SUFFIXES) {
-        forms.add(rakaBase + suf);
+    // 2. Conditionally add Rakaranshaya (්‍ර)
+    if (!RAKARANSHAYA_BLOCK.has(base)) {
+        const rakaBase = base + RAKA_SUFFIX_BASE;
+        for (const suf of RAKA_VOWEL_SUFFIXES) {
+            forms.add(rakaBase + suf);
+        }
     }
 
-    // 3. Yansaya: (base + "්‍ය") + vowel suffixes
-    const yansaBase = base + YANSA_SUFFIX_BASE;
-    for (const suf of YANSA_VOWEL_SUFFIXES) {
-        forms.add(yansaBase + suf);
+    // 3. Conditionally add Yansaya (්‍ය)
+    if (!YANSAYA_BLOCK.has(base)) {
+        const yansaBase = base + YANSA_SUFFIX_BASE;
+        for (const suf of YANSA_VOWEL_SUFFIXES) {
+            forms.add(yansaBase + suf);
+        }
     }
 
     return Array.from(forms);
 }
+
 
 type Metrics = {
     total_keystrokes: number;
@@ -653,6 +662,7 @@ export default function KeyboardBase({
             {/* Vowel popup (eyespeak only; wijesekara has hasVowelPopup = false) */}
             {layout.hasVowelPopup && vowelPopup && (
                 <VowelPopup
+                    key={vowelPopup.options[0]}
                     predictions={vowelPopup.options}
                     onSelect={handleVowelSelect}
                     onClose={() => setVowelPopup(null)}

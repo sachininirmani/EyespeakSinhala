@@ -13,6 +13,9 @@ import SUSForm from "../components/SUSForm";
 import KeyboardLoader from "../keyboard/KeyboardLoader";
 import BiasCalibration from "../components/BiasCalibration";
 import { getRandomizedLayouts } from "../keyboard/KeyboardLoader";
+import GazeDwellButton from "../components/GazeDwellButton";
+import DwellSliderSingle from "../components/DwellSliderSingle";
+import GlobalGazeIndicator from "../components/GlobalGazeIndicator";
 
 type LiveMetrics = {
     total_keystrokes: number;
@@ -159,8 +162,8 @@ export default function EvalWrapper() {
             layout_id: currentLayout,
             round_id: `layout${layoutIndex}_round${promptIndex}`,
             prompt_id: `prompt_${promptIndex}`,
-            prompt: currentPrompt,                 // NEW: keep prompt separately
-            intended_text: "",                     // left blank; can be filled later
+            prompt: currentPrompt,                 // keep prompt separately
+            intended_text: "",
             transcribed_text: currentText,
             dwell_main_ms: dwellMain,
             dwell_popup_ms: currentLayout === "wijesekara" ? null : dwellPopup,
@@ -227,8 +230,12 @@ export default function EvalWrapper() {
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [phase, participant]);
 
+    const gazeIndicatorActive =
+        phase === "familiarize" || phase === "ready" || phase === "sus";
+
     return (
         <div
+            id="eval-scroll-container"
             style={{
                 width: "100vw",
                 height: "100vh",
@@ -238,8 +245,16 @@ export default function EvalWrapper() {
                 flexDirection: "column",
                 alignItems: "center",
                 background: "#f8fafc",
+                position: "relative",
+                overflowY: "auto",
             }}
         >
+            {/* Global gaze indicator for familiarization, ready & SUS */}
+            <GlobalGazeIndicator
+                active={gazeIndicatorActive}
+                layoutId={currentLayout}
+            />
+
             <h2>Eyespeak Sinhala — Evaluation Runner</h2>
 
             {/* ---------------- SETUP ---------------- */}
@@ -358,8 +373,6 @@ export default function EvalWrapper() {
                     )}
                 </>
             )}
-            ...
-
 
             {/* ---------------- STATUS BAR ---------------- */}
             {phase !== "setup" && phase !== "biascalibration" && phase !== "done" && (
@@ -394,25 +407,34 @@ export default function EvalWrapper() {
                             setPopup={(v)=>setDwellPopup(v)}
                         />
                     ) : (
-                        <div style={{ marginTop: 6 }}>
-                            <div className="label">Main Dwell (ms)</div>
-                            <input
-                                type="range"
-                                min={200}
-                                max={1200}
-                                step={50}
-                                value={dwellMain}
-                                onChange={(e) => setDwellMain(Number(e.target.value))}
-                                style={{ width: "100%", maxWidth: 300 }}
-                            />
-                            <span style={{ marginLeft: 8 }}>{dwellMain} ms</span>
-                        </div>
+                        <DwellSliderSingle
+                            value={dwellMain}
+                            setValue={setDwellMain}
+                            min={200}
+                            max={1200}
+                            step={50}
+                            label="Main Dwell (ms)"
+                        />
+
                     )}
-                    <div style={{ marginTop: 8 }}>
-                        <button className="btn primary" onClick={toReady}>
+                    <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
+                        <GazeDwellButton
+                            onActivate={toReady}
+                            dwellMs={900}
+                            style={{
+                                padding: "16px 50px",
+                                background: "#0f766e",
+                                color: "white",
+                                borderRadius: 12,
+                                fontSize: 20,
+                                fontWeight: 600,
+                                boxShadow: "0 4px 12px rgba(15,118,110,0.3)",
+                            }}
+                        >
                             Ready
-                        </button>
+                        </GazeDwellButton>
                     </div>
+
                 </div>
             )}
 
@@ -439,23 +461,19 @@ export default function EvalWrapper() {
                                     main={dwellMain}
                                     popup={dwellPopup ?? 450}
                                     setMain={setDwellMain}
-                                    setPopup={(v)=>setDwellPopup(v)}
+                                    setPopup={(v) => setDwellPopup(v)}
                                 />
                             ) : (
-                                <div style={{ marginTop: 6 }}>
-                                    <div className="label">Main Dwell (ms)</div>
-                                    <input
-                                        type="range"
-                                        min={200}
-                                        max={1200}
-                                        step={50}
-                                        value={dwellMain}
-                                        onChange={(e) => setDwellMain(Number(e.target.value))}
-                                        style={{ width: "100%", maxWidth: 300 }}
-                                    />
-                                    <span style={{ marginLeft: 8 }}>{dwellMain} ms</span>
-                                </div>
+                                <DwellSliderSingle
+                                    value={dwellMain}
+                                    setValue={setDwellMain}
+                                    min={200}
+                                    max={1200}
+                                    step={50}
+                                    label="Main Dwell (ms)"
+                                />
                             )}
+
                         </div>
 
                         <div style={{ marginTop: 18 }}>
