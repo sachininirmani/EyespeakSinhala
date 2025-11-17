@@ -127,9 +127,10 @@ const YANSA_VOWEL_SUFFIXES: string[] = [
 function buildAllDiacriticsForBase(base: string): string[] {
     const forms = new Set<string>();
 
-    // --- Lists provided by you ---
-    const RAKARANSHAYA_BLOCK = new Set(["න", "ය", "ර", "ල"]);
-    const YANSAYA_BLOCK = new Set(["ය", "ර", "ප"]);
+    // --- Single allowed list for both Raka + Yansa ---
+    const CONJUNCT_ALLOWED = new Set([
+        "ක", "ග", "ජ", "ට", "ඩ", "ත", "ද", "ප", "බ", "ම", "ස", "ල", "ළ", "හ"
+    ]);
 
     // 1. ALWAYS add plain suffixes
     for (const suf of PLAIN_SUFFIXES) {
@@ -137,7 +138,7 @@ function buildAllDiacriticsForBase(base: string): string[] {
     }
 
     // 2. Conditionally add Rakaranshaya (්‍ර)
-    if (!RAKARANSHAYA_BLOCK.has(base)) {
+    if (CONJUNCT_ALLOWED.has(base)) {
         const rakaBase = base + RAKA_SUFFIX_BASE;
         for (const suf of RAKA_VOWEL_SUFFIXES) {
             forms.add(rakaBase + suf);
@@ -145,7 +146,7 @@ function buildAllDiacriticsForBase(base: string): string[] {
     }
 
     // 3. Conditionally add Yansaya (්‍ය)
-    if (!YANSAYA_BLOCK.has(base)) {
+    if (CONJUNCT_ALLOWED.has(base)) {
         const yansaBase = base + YANSA_SUFFIX_BASE;
         for (const suf of YANSA_VOWEL_SUFFIXES) {
             forms.add(yansaBase + suf);
