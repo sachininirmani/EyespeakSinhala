@@ -19,6 +19,12 @@
 //          (e.g. both left-ish).
 //  - The highest-scoring layout wins.
 //
+//  NEW: Plain consonants (no diacritics, no RAKA/YANSA, no ං/ඃ influence)
+//       do NOT get directional weights. In the optimiser they don't compete
+//       with diacritics: they just get a small bonus for being placed in the
+//       least-crowded quadrant, so they "fill gaps" instead of stealing
+//       good vowel positions.
+//
 // No other files need to change; VowelPopup just calls computeVowelPlacementsForPage().
 
 export type Direction = "TOP" | "RIGHT" | "BOTTOM" | "LEFT" | "SAFE";
@@ -45,7 +51,7 @@ interface DirectionWeights {
  *
  * Notes:
  *   "්"    → strong TOP
- *   ""     → (handled as bare consonant → TOP fallback)
+ *   ""     → (handled separately; bare consonant now treated as "plain")
  *   "ා,ැ,ෑ" → RIGHT
  *   "ි,ී"   → TOP
  *   "ු,ූ"   → BOTTOM
@@ -59,16 +65,16 @@ interface DirectionWeights {
  */
 const SIMPLE_SUFFIX_WEIGHTS: Record<string, DirectionWeights> = {
     "්":  { top: 4,   right: 0,   bottom: 0,   left: 0 },
-    "ා":  { top: 0,   right: 3,   bottom: 0,   left: 0 },
-    "ැ":  { top: 0,   right: 3,   bottom: 0,   left: 0 },
-    "ෑ":  { top: 0,   right: 3,   bottom: 0,   left: 0 },
-    "ි":  { top: 3,   right: 0,   bottom: 0,   left: 0 },
-    "ී":  { top: 3,   right: 0,   bottom: 0,   left: 0 },
-    "ු":  { top: 0,   right: 0,   bottom: 3,   left: 0 },
-    "ූ":  { top: 0,   right: 0,   bottom: 3,   left: 0 },
-    "ෘ":  { top: 0,   right: 2, bottom: 0,   left: 0 }, // weak right
+    "ා":  { top: 0,   right: 4,   bottom: 0,   left: 0 },
+    "ැ":  { top: 0,   right: 4,   bottom: 0,   left: 0 },
+    "ෑ":  { top: 0,   right: 4,   bottom: 0,   left: 0 },
+    "ි":  { top: 4,   right: 0,   bottom: 0,   left: 0 },
+    "ී":  { top: 4,   right: 0,   bottom: 0,   left: 0 },
+    "ු":  { top: 0,   right: 0,   bottom: 4,   left: 0 },
+    "ූ":  { top: 0,   right: 0,   bottom: 4,   left: 0 },
+    "ෘ":  { top: 0,   right: 2,   bottom: 0,   left: 0 }, // weak right
     "ෲ":  { top: 0,   right: 2,   bottom: 0,   left: 0 },
-    "ෙ":  { top: 0,   right: 0,   bottom: 0,   left: 3 },
+    "ෙ":  { top: 0,   right: 0,   bottom: 0,   left: 4 },
     "ේ":  { top: 2,   right: 0,   bottom: 0,   left: 3 }, // LEFT_TOP > LEFT > TOP
     "ෛ":  { top: 0,   right: 0,   bottom: 0,   left: 3 },
     "ො":  { top: 0,   right: 3,   bottom: 0,   left: 2 }, // RIGHT > LEFT
@@ -82,19 +88,30 @@ const SORTED_SUFFIXES = Object.keys(SIMPLE_SUFFIX_WEIGHTS).sort(
     (a, b) => b.length - a.length
 );
 
+/* ---------- Direction info (weights + plain flag) ---------- */
+
+interface DirectionInfo {
+    weights: DirectionWeights;
+    isPlain: boolean; // bare consonant / independent char with no diacritics, no RAKA/YANSA, no ං/ඃ influence
+}
+
 /**
- * Compute directional weights for a suggestion.
+ * Compute directional weights for a suggestion + whether it's "plain".
  *
  * Important special handling:
  *  - We strip trailing ං / ඃ *first* and treat them as weak RIGHT decoration,
  *    so they never override the main vowel / cluster diacritic.
  *  - Then we detect RAKA / YANSA, and finally the main suffix (ා,ෙ,ේ,ො,ෝ, etc.).
+ *  - If after all this we still have zero weights and no RAKA/YANSA, we treat
+ *    this as a "plain" consonant/vowel: it will not get any directional weight
+ *    in the optimiser and will just be used to balance empty sectors.
  */
-function computeDirectionWeights(text: string): DirectionWeights {
+function computeDirectionInfo(text: string): DirectionInfo {
     let weights: DirectionWeights = { top: 0, right: 0, bottom: 0, left: 0 };
     let working = text;
 
     // 1. Strip trailing ං / ඃ – decoration only, low-right bias
+    //    NOTE: this means plain consonant *cannot* have ං/ඃ, by definition.
     while (working.endsWith("ං") || working.endsWith("ඃ")) {
         weights.right += 0.5; // very low priority decoration
         working = working.slice(0, -1);
@@ -131,19 +148,40 @@ function computeDirectionWeights(text: string): DirectionWeights {
         }
     }
 
-    // 4. Bare consonant fallback → TOP
-    if (!matched && rakaIdx === -1 && yansaIdx === -1) {
-        weights.top += 0.5;
-    }
+    // 4. Decide if this is a plain consonant/vowel (for popup purposes)
+    const isPlain =
+        !matched &&
+        rakaIdx === -1 &&
+        yansaIdx === -1 &&
+        weights.top === 0 &&
+        weights.right === 0 &&
+        weights.bottom === 0 &&
+        weights.left === 0;
 
-    return weights;
+    return { weights, isPlain };
+}
+
+/**
+ * Old API kept for compatibility: just return weights.
+ * Plain consonants now get *zero* weights here.
+ */
+function computeDirectionWeights(text: string): DirectionWeights {
+    return computeDirectionInfo(text).weights;
 }
 
 /**
  * Legacy simple classifier (kept for compatibility elsewhere).
+ * For plain consonants, we keep previous behaviour: classify as TOP.
  */
 export function classifyDirection(text: string): Direction {
-    const { top, right, bottom, left } = computeDirectionWeights(text);
+    const info = computeDirectionInfo(text);
+    const { top, right, bottom, left } = info.weights;
+
+    if (info.isPlain) {
+        // Old fallback behaviour
+        return "TOP";
+    }
+
     if (top > 0) return "TOP";
     if (bottom >= 1 && bottom >= left && bottom >= right) return "BOTTOM";
     if (left > right) return "LEFT";
@@ -213,7 +251,7 @@ function getDirection8PriorityChain(weights: DirectionWeights): Direction8[] {
     const positive = axes.filter(a => a.w > 0).sort((a, b) => b.w - a.w);
 
     if (positive.length === 0) {
-        return ["TOP"]; // safe fallback
+        return ["TOP"]; // safe fallback for "no direction"
     }
 
     const chain: Direction8[] = [];
@@ -261,15 +299,40 @@ function getMainAxis(weights: DirectionWeights): Axis {
 
 interface SuggestionInfo {
     option: string;
-    prefs: Direction8[];   // up to 3 preferred 8-way directions
-    mainAxis: Axis;        // coarse main axis for grouping
+    prefs: Direction8[];   // up to 3 preferred 8-way directions (empty for plain)
+    mainAxis: Axis;        // coarse main axis for grouping (ignored for plain)
+    isPlain: boolean;      // bare consonant / char with no diacritics
 }
 
 const PREF_WEIGHTS = [1.0, 0.6, 0.3]; // first, second, third preference
 const MAX_DIR_DIST = Math.PI / 2;     // beyond 90° → score 0
 const GROUP_BONUS = 0.15;             // bonus per neighbour pair with same mainAxis
+const PLAIN_BALANCE_WEIGHT = 0.25;    // how strongly plain chars prefer least-crowded quadrant
+
+// Map an angle to the nearest coarse axis (TOP/RIGHT/BOTTOM/LEFT)
+function getAxisFromAngle(angle: number): Axis {
+    const axes: { axis: Axis; anchor: number }[] = [
+        { axis: "RIGHT",  anchor: 0 },
+        { axis: "BOTTOM", anchor: Math.PI / 2 },
+        { axis: "LEFT",   anchor: Math.PI },
+        { axis: "TOP",    anchor: (3 * Math.PI) / 2 },
+    ];
+    let bestAxis: Axis = "RIGHT";
+    let bestDist = Infinity;
+    for (const a of axes) {
+        const d = angularDistance(angle, a.anchor);
+        if (d < bestDist) {
+            bestDist = d;
+            bestAxis = a.axis;
+        }
+    }
+    return bestAxis;
+}
 
 function scoreSuggestionAtAngle(info: SuggestionInfo, angle: number): number {
+    // Plain suggestions do not contribute directional closeness.
+    if (info.isPlain || info.prefs.length === 0) return 0;
+
     let best = 0;
     const maxPref = Math.min(info.prefs.length, 3);
 
@@ -294,19 +357,47 @@ function scorePermutation(
     const n = infos.length;
     let total = 0;
 
-    // Direction closeness
+    // 0. Quadrant occupancy for non-plain suggestions
+    const occupancy: Record<Axis, number> = { TOP: 0, RIGHT: 0, BOTTOM: 0, LEFT: 0 };
+    for (let s = 0; s < n; s++) {
+        const info = infos[perm[s]];
+        if (info.isPlain) continue;
+        const axis = getAxisFromAngle(slotAngles[s]);
+        occupancy[axis]++;
+    }
+
+    // 1. Direction closeness (only non-plain contribute)
     for (let s = 0; s < n; s++) {
         const info = infos[perm[s]];
         total += scoreSuggestionAtAngle(info, slotAngles[s]);
     }
 
-    // Neighbour grouping (circular)
+    // 2. Neighbour grouping (circular), but ignore plain suggestions
     for (let s = 0; s < n; s++) {
         const next = (s + 1) % n;
         const infoA = infos[perm[s]];
         const infoB = infos[perm[next]];
+        if (infoA.isPlain || infoB.isPlain) continue;
         if (infoA.mainAxis === infoB.mainAxis) {
             total += GROUP_BONUS;
+        }
+    }
+
+    // 3. Plain consonant balancing: prefer least-crowded quadrant
+    const occValues = Object.values(occupancy);
+    const maxOcc = Math.max(...occValues);
+    const minOcc = Math.min(...occValues);
+
+    if (maxOcc !== minOcc) {
+        const denom = maxOcc - minOcc || 1;
+        for (let s = 0; s < n; s++) {
+            const info = infos[perm[s]];
+            if (!info.isPlain) continue;
+            const axis = getAxisFromAngle(slotAngles[s]);
+            const occ = occupancy[axis];
+            // Higher score if this quadrant has lower occupancy.
+            const factor = (maxOcc - occ) / denom; // 1 for least, 0 for most
+            total += factor * PLAIN_BALANCE_WEIGHT;
         }
     }
 
@@ -328,12 +419,12 @@ export function computeVowelPlacementsForPage(
         return [{ option: pageItems[0], angle: (3 * Math.PI) / 2 }];
     }
 
-    // 1. Precompute suggestion info (weights, prefs, mainAxis)
+    // 1. Precompute suggestion info (weights, prefs, mainAxis, isPlain)
     const infos: SuggestionInfo[] = pageItems.map((opt) => {
-        const weights = computeDirectionWeights(opt);
-        const chain = getDirection8PriorityChain(weights).slice(0, 3); // up to 3 prefs
-        const mainAxis = getMainAxis(weights);
-        return { option: opt, prefs: chain, mainAxis };
+        const { weights, isPlain } = computeDirectionInfo(opt);
+        const chain = isPlain ? [] : getDirection8PriorityChain(weights).slice(0, 3); // up to 3 prefs
+        const mainAxis = isPlain ? "TOP" : getMainAxis(weights);
+        return { option: opt, prefs: chain, mainAxis, isPlain };
     });
 
     // 2. Build n equally spaced slot angles (no offset; RIGHT at 0 rad)
