@@ -34,14 +34,6 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
         return predictions.slice(start, end);
     }, [predictions, page]);
 
-    const controlLabels = useMemo(() => {
-        if (totalPages === 1) return [];
-        const labels: ("More" | "Back")[] = [];
-        if (page > 0) labels.push("Back");
-        if (page < totalPages - 1) labels.push("More");
-        return labels;
-    }, [page, totalPages]);
-
     const radius = 200;
     const innerRadius = radius * 0.65;
     const btnSize = 90;
@@ -66,12 +58,38 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
         onClose();
     };
 
+    /*---------------------------------------------*
+     *   AVOID POPUP CLIPPING (SMART CENTER BIAS)   *
+     *---------------------------------------------*/
+    const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1920;
+
+    let leftPos = position.left - radius / 2;
+    let topPos = position.top - radius + btnSize / 2;
+
+    // Prevent left overflow
+    if (leftPos < 20) leftPos = 20;
+
+    // Prevent right overflow
+    if (leftPos + radius * 2 > viewportWidth - 20) {
+        leftPos = viewportWidth - radius * 2 - 20;
+    }
+
+    /*---------------------------------------------*
+     *   SEMICIRCLE CENTER CONTROL BUTTON(S)        *
+     *---------------------------------------------*/
+
+    const showBack = page > 0;
+    const showMore = page < totalPages - 1;
+
+    const halfButtonSize = 80; // LARGE clickable halves
+    const gap = 7; // small visual gap between Back and More halves
+
     return (
         <div
             style={{
                 position: "absolute",
-                top: position.top - radius + btnSize / 2,
-                left: position.left - radius / 2,
+                top: topPos,
+                left: leftPos,
                 width: radius * 2,
                 height: radius * 2,
                 borderRadius: "50%",
@@ -81,7 +99,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                 zIndex: 1000,
             }}
         >
-            {/* Suggestions */}
+            {/* SUGGESTION BUTTONS */}
             {placements.map(({ option, angle }) => {
                 const x = radius + innerRadius * Math.cos(angle) - btnSize / 2;
                 const y = radius + innerRadius * Math.sin(angle) - btnSize / 2;
@@ -108,37 +126,72 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                 );
             })}
 
-            {/* CENTER CONTROLS */}
-            {controlLabels.length > 0 && (
-                <div
-                    style={{
-                        position: "absolute",
-                        left: radius,
-                        top: radius,
-                        transform: "translate(-50%, -50%)",
-                        display: "flex",
-                        gap: 12,
-                    }}
-                >
-                    {controlLabels.map((label) => (
-                        <button
-                            key={label}
-                            onClick={() => handleClick(label)}
-                            style={{
-                                width: 90,
-                                height: 90,
-                                borderRadius: "50%",
-                                backgroundColor: "#ffe08a",
-                                border: "2px solid #888",
-                                fontSize: 22,
-                                fontWeight: 600,
-                            }}
-                        >
-                            {label}
-                        </button>
-                    ))}
-                </div>
-            )}
+            {/* SEMICIRCLE CENTER CONTROLS */}
+            <div
+                style={{
+                    position: "absolute",
+                    left: radius,
+                    top: radius,
+                    transform: "translate(-50%, -50%)",
+                    width: halfButtonSize * 2 + gap,
+                    height: halfButtonSize,
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                }}
+            >
+                {/* LEFT HALF (BACK) */}
+                {showBack && (
+                    <div
+                        onClick={() => handleClick("Back")}
+                        style={{
+                            width: halfButtonSize,
+                            height: halfButtonSize,
+                            borderTopLeftRadius: halfButtonSize,
+                            borderBottomLeftRadius: halfButtonSize,
+                            borderTopRightRadius: 0,
+                            borderBottomRightRadius: 0,
+                            background: "#ffe08a",
+                            border: "2px solid #888",
+                            marginRight: gap,
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center",
+                            fontSize: 22,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                        }}
+                    >
+                        Back
+                    </div>
+                )}
+
+                {/* RIGHT HALF (MORE) */}
+                {showMore && (
+                    <div
+                        onClick={() => handleClick("More")}
+                        style={{
+                            width: halfButtonSize,
+                            height: halfButtonSize,
+                            borderTopRightRadius: halfButtonSize,
+                            borderBottomRightRadius: halfButtonSize,
+                            borderTopLeftRadius: 0,
+                            borderBottomLeftRadius: 0,
+                            background: "#ffe08a",
+                            border: "2px solid #888",
+                            marginLeft: showBack ? 0 : gap,
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center",
+                            fontSize: 22,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                        }}
+                    >
+                        More
+                    </div>
+                )}
+            </div>
         </div>
     );
 };
