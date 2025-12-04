@@ -13,6 +13,16 @@ The system integrates a **Tobii eye tracker**, a **Python backend**, and a **Nex
 
 This document explains the **complete setup** and how to **run the working model**.
 
+Frontend - cmd
+- cd frontend
+- npm run dev
+
+Backend - cmd
+- cd backend
+- .venv\Scripts\activate
+- python app.py
+
+http://localhost:5173/
 ---
 
 ## 📁 Project Structure
