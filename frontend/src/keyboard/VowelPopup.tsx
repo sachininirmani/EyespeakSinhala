@@ -22,6 +22,8 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     const [page, setPage] = useState(0);
     const total = predictions.length;
 
+    const [cooldown, setCooldown] = useState(false); // ★ NEW
+
     const totalPages = useMemo(() => {
         if (total === 0) return 1;
         return Math.ceil(total / DIACRITICS_PER_STAGE);
@@ -30,8 +32,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     const pageItems = useMemo(() => {
         if (total === 0) return [];
         const start = page * DIACRITICS_PER_STAGE;
-        const end = start + DIACRITICS_PER_STAGE;
-        return predictions.slice(start, end);
+        return predictions.slice(start, start + DIACRITICS_PER_STAGE);
     }, [predictions, page]);
 
     const radius = 200;
@@ -43,17 +44,35 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
         [pageItems]
     );
 
+    /* ----------------------------------------------------------
+     *  🔥 HANDLE CLICK WITH COOLDOWN + VISUAL FEEDBACK
+     * ---------------------------------------------------------- */
     const handleClick = (option: string) => {
+        // BLOCK ANY CONTROL DURING COOLDOWN
+        if ((option === "More" || option === "Back") && cooldown) return;
+
+        // CONTROL BUTTONS
         if (option === "More") {
             onControlClick?.("More");
             setPage((p) => Math.min(p + 1, totalPages - 1));
+
+            // Activate cooldown
+            setCooldown(true);
+            setTimeout(() => setCooldown(false), 400);
             return;
         }
+
         if (option === "Back") {
             onControlClick?.("Back");
             setPage((p) => Math.max(p - 1, 0));
+
+            // Activate cooldown
+            setCooldown(true);
+            setTimeout(() => setCooldown(false), 400);
             return;
         }
+
+        // NORMAL SELECTION
         onSelect(option);
         onClose();
     };
@@ -66,10 +85,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     let leftPos = position.left - radius / 2;
     let topPos = position.top - radius + btnSize / 2;
 
-    // Prevent left overflow
     if (leftPos < 20) leftPos = 20;
-
-    // Prevent right overflow
     if (leftPos + radius * 2 > viewportWidth - 20) {
         leftPos = viewportWidth - radius * 2 - 20;
     }
@@ -77,12 +93,19 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     /*---------------------------------------------*
      *   SEMICIRCLE CENTER CONTROL BUTTON(S)        *
      *---------------------------------------------*/
-
     const showBack = page > 0;
     const showMore = page < totalPages - 1;
 
-    const halfButtonSize = 80; // LARGE clickable halves
-    const gap = 7; // small visual gap between Back and More halves
+    const halfButtonSize = 80;
+    const gap = 7;
+
+    /* ----------------------------------------------------------
+     *  🎨 COOLDOWN VISUAL COLOR STATES (smooth fade)
+     * ---------------------------------------------------------- */
+    const activeColor = "#ffe08a";
+    const cooldownColor = "#ffd2d2";
+
+    const currentColor = cooldown ? cooldownColor : activeColor;
 
     return (
         <div
@@ -149,9 +172,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             height: halfButtonSize,
                             borderTopLeftRadius: halfButtonSize,
                             borderBottomLeftRadius: halfButtonSize,
-                            borderTopRightRadius: 0,
-                            borderBottomRightRadius: 0,
-                            background: "#ffe08a",
+                            background: currentColor,
                             border: "2px solid #888",
                             marginRight: gap,
                             display: "flex",
@@ -159,7 +180,8 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             alignItems: "center",
                             fontSize: 22,
                             fontWeight: 600,
-                            cursor: "pointer",
+                            cursor: cooldown ? "not-allowed" : "pointer",
+                            transition: "background 0.35s ease",
                         }}
                     >
                         Back
@@ -175,9 +197,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             height: halfButtonSize,
                             borderTopRightRadius: halfButtonSize,
                             borderBottomRightRadius: halfButtonSize,
-                            borderTopLeftRadius: 0,
-                            borderBottomLeftRadius: 0,
-                            background: "#ffe08a",
+                            background: currentColor,
                             border: "2px solid #888",
                             marginLeft: showBack ? 0 : gap,
                             display: "flex",
@@ -185,7 +205,8 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             alignItems: "center",
                             fontSize: 22,
                             fontWeight: 600,
-                            cursor: "pointer",
+                            cursor: cooldown ? "not-allowed" : "pointer",
+                            transition: "background 0.35s ease",
                         }}
                     >
                         More
