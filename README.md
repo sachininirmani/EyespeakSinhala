@@ -140,27 +140,17 @@ npm run dev
 | 3 | **Frontend** | UI displays gaze & keyboard interactions |
 
 ---
+✔ Open Eyespeak v1:
+http://localhost:5173/keyboard/eyespeak_v1
 
-# 🛠️ Troubleshooting
+✔ Open Eyespeak v2:
+http://localhost:5173/keyboard/eyespeak_v2
 
-### ❌ Gaze not moving in UI?
-✔ TobiiBridge not running  
-✔ Backend not receiving WebSocket data  
-✔ Tobii disconnected / permissions issue  
+✔ Open Eyespeak v3:
+http://localhost:5173/keyboard/eyespeak_v3
 
-### ❌ Backend fails to start?
-✔ `.venv` not activated  
-✔ Missing dependencies → run `pip install -r requirements.txt`  
-✔ Port 5000 may already be in use  
-
-### ❌ Frontend error?
-✔ Delete `node_modules` → run `npm install` again  
-
-### ❌ CORS or API connection issues?
-✔ Backend CORS must be enabled  
-✔ Check correct backend URL in frontend  
-
----
+✔ Open Wijesekara:
+http://localhost:5173/keyboard/wijesekara
 
 # 🎯 Summary
 

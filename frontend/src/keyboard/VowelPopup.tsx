@@ -7,7 +7,7 @@ interface VowelPopupProps {
     onSelect: (value: string) => void;
     onClose: () => void;
     position: { top: number; left: number };
-    onControlClick?: (label: "More" | "Back") => void;
+    onControlClick?: (label: "More" | "Back" | "Close") => void;
 }
 
 const VowelPopup: React.FC<VowelPopupProps> = ({
@@ -22,7 +22,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     const [page, setPage] = useState(0);
     const total = predictions.length;
 
-    const [cooldown, setCooldown] = useState(false); // ★ NEW
+    const [cooldown, setCooldown] = useState(false);
 
     const totalPages = useMemo(() => {
         if (total === 0) return 1;
@@ -45,18 +45,15 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     );
 
     /* ----------------------------------------------------------
-     *  🔥 HANDLE CLICK WITH COOLDOWN + VISUAL FEEDBACK
+     *  HANDLE CLICK
      * ---------------------------------------------------------- */
     const handleClick = (option: string) => {
-        // BLOCK ANY CONTROL DURING COOLDOWN
         if ((option === "More" || option === "Back") && cooldown) return;
 
-        // CONTROL BUTTONS
         if (option === "More") {
             onControlClick?.("More");
             setPage((p) => Math.min(p + 1, totalPages - 1));
 
-            // Activate cooldown
             setCooldown(true);
             setTimeout(() => setCooldown(false), 400);
             return;
@@ -66,21 +63,24 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
             onControlClick?.("Back");
             setPage((p) => Math.max(p - 1, 0));
 
-            // Activate cooldown
             setCooldown(true);
             setTimeout(() => setCooldown(false), 400);
             return;
         }
 
-        // NORMAL SELECTION
+        if (option === "Close") {
+            onControlClick?.("Close");
+            onClose();
+            return;
+        }
+
         onSelect(option);
         onClose();
     };
 
-    /*---------------------------------------------*
-     *   AVOID POPUP CLIPPING (SMART CENTER BIAS)   *
-     *---------------------------------------------*/
-    const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1920;
+    /* POSITIONING */
+    const viewportWidth =
+        typeof window !== "undefined" ? window.innerWidth : 1920;
 
     let leftPos = position.left - radius / 2;
     let topPos = position.top - radius + btnSize / 2;
@@ -90,18 +90,16 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
         leftPos = viewportWidth - radius * 2 - 20;
     }
 
-    /*---------------------------------------------*
-     *   SEMICIRCLE CENTER CONTROL BUTTON(S)        *
-     *---------------------------------------------*/
+    /* CONTROL BUTTON LOGIC */
     const showBack = page > 0;
     const showMore = page < totalPages - 1;
+
+    // NEW: showClose if on first page
+    const showClose = page === 0;
 
     const halfButtonSize = 80;
     const gap = 7;
 
-    /* ----------------------------------------------------------
-     *  🎨 COOLDOWN VISUAL COLOR STATES (smooth fade)
-     * ---------------------------------------------------------- */
     const activeColor = "#ffe08a";
     const cooldownColor = "#ffd2d2";
 
@@ -163,7 +161,31 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                     alignItems: "center",
                 }}
             >
-                {/* LEFT HALF (BACK) */}
+                {/* LEFT HALF — NEW CLOSE BUTTON ON PAGE 0 */}
+                {showClose && (
+                    <div
+                        onClick={() => handleClick("Close")}
+                        style={{
+                            width: halfButtonSize,
+                            height: halfButtonSize,
+                            borderTopLeftRadius: halfButtonSize,
+                            borderBottomLeftRadius: halfButtonSize,
+                            background: "#ffd0d0",
+                            border: "2px solid #888",
+                            marginRight: gap,
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center",
+                            fontSize: 28,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                        }}
+                    >
+                        ×
+                    </div>
+                )}
+
+                {/* LEFT HALF — BACK (only when page > 0) */}
                 {showBack && (
                     <div
                         onClick={() => handleClick("Back")}
@@ -188,7 +210,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                     </div>
                 )}
 
-                {/* RIGHT HALF (MORE) */}
+                {/* RIGHT HALF — MORE (unchanged) */}
                 {showMore && (
                     <div
                         onClick={() => handleClick("More")}
@@ -199,7 +221,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             borderBottomRightRadius: halfButtonSize,
                             background: currentColor,
                             border: "2px solid #888",
-                            marginLeft: showBack ? 0 : gap,
+                            marginLeft: showBack || showClose ? 0 : gap,
                             display: "flex",
                             justifyContent: "center",
                             alignItems: "center",
