@@ -34,8 +34,8 @@ const SUGGESTION_ROW_HEIGHT = 50;
 type KeyboardSize = { width: number; height: number };
 
 let globalKeyboardSize: KeyboardSize = {
-    width: 900,
-    height: 360,
+    width: 1800,
+    height: 450,
 };
 
 /**
@@ -93,8 +93,8 @@ const PURE_VOWELS = new Set([
 //  - reph forms like e/ē/ai/o/ō/au (as dependent signs)
 //  - anusvara (ං) and visarga (ඃ)
 const PLAIN_SUFFIXES: string[] = [
-    "්", // hal kireema (e.g., "ක්")
-    "", // bare consonant (e.g., "ක")
+    "්",  // hal kireema (e.g., "ක්")
+    "",   // bare consonant (e.g., "ක")
     "ා",
     "ැ",
     "ෑ",
@@ -117,23 +117,23 @@ const PLAIN_SUFFIXES: string[] = [
 // Rakaransaya patterns (්‍ර + optional vowel signs)
 const RAKA_SUFFIX_BASE = "්‍ර";
 const RAKA_VOWEL_SUFFIXES: string[] = [
-    "", // ක්‍ර
-    "ා", // ක්‍රා
-    "ැ", // ක්‍රැ
-    "ෑ", // ක්‍රෑ (rare but allowed)
-    "ි", // ක්‍රි
-    "ී", // ක්‍රී
-    "ෙ", // ක්‍රෙ
-    "ේ", // ක්‍රේ
-    "ො", // ක්‍රො
-    "ෝ", // ක්‍රෝ
+    "",   // ක්‍ර
+    "ා",  // ක්‍රා
+    "ැ",  // ක්‍රැ
+    "ෑ",  // ක්‍රෑ (rare but allowed)
+    "ි",  // ක්‍රි
+    "ී",  // ක්‍රී
+    "ෙ",  // ක්‍රෙ
+    "ේ",  // ක්‍රේ
+    "ො",  // ක්‍රො
+    "ෝ",  // ක්‍රෝ
 ];
 
 // Yansaya patterns (්‍ය + optional vowel signs)
 const YANSA_SUFFIX_BASE = "්‍ය";
 const YANSA_VOWEL_SUFFIXES: string[] = [
-    "", // ක්‍ය
-    "ා", // ක්‍යා
+    "",   // ක්‍ය
+    "ා",  // ක්‍යා
     "ු",
     "ූ",
     "ැ",
@@ -155,20 +155,7 @@ function buildAllDiacriticsForBase(base: string): string[] {
 
     // --- Single allowed list for both Raka + Yansa ---
     const CONJUNCT_ALLOWED = new Set([
-        "ක",
-        "ග",
-        "ජ",
-        "ට",
-        "ඩ",
-        "ත",
-        "ද",
-        "ප",
-        "බ",
-        "ම",
-        "ස",
-        "ල",
-        "ළ",
-        "හ",
+        "ක", "ග", "ජ", "ට", "ඩ", "ත", "ද", "ප", "බ", "ම", "ස", "ල", "ළ", "හ"
     ]);
 
     // 1. ALWAYS add plain suffixes
@@ -582,6 +569,8 @@ export default function KeyboardBase({
                         display: "flex",
                         flexDirection: "column",
                         gap: 10,
+                        flex: 1,
+                        minHeight: 0,
                     }}
                 >
                     {rows.map((row, rowIdx) => {
@@ -600,6 +589,10 @@ export default function KeyboardBase({
                                         gridTemplateColumns: `repeat(${totalColumns}, 1fr)`,
                                         gap: 10,
                                         justifyItems: "center",
+                                        flex: 1,
+                                        minHeight: 0,
+                                        gridTemplateRows: "1fr",
+
                                     }}
                                 >
                                     {/* Left padding slots */}
@@ -623,7 +616,12 @@ export default function KeyboardBase({
                                                 onClick={(e) => handleKeyPress(char, e)}
                                                 style={{
                                                     position: "relative",
-                                                    padding: "16px",
+                                                    height: "100%",
+                                                    width: "100%",
+                                                    padding: "0",
+                                                    display: "flex",
+                                                    justifyContent: "center",
+                                                    alignItems: "center",
                                                     fontSize: "26px",
                                                     borderRadius: 8,
                                                     transition: "all 0.15s ease",
@@ -632,7 +630,6 @@ export default function KeyboardBase({
                                                             ? "#b3e6ff"
                                                             : "#fdfdfd",
                                                     border: "1px solid #ccc",
-                                                    width: "100%",
                                                 }}
                                             >
                                                 <span>{char}</span>
@@ -672,6 +669,9 @@ export default function KeyboardBase({
                                 key={`row-${rowIdx}`}
                                 style={{
                                     display: "grid",
+                                    gridTemplateRows: "1fr",
+                                    flex: 1,
+                                    minHeight: 0,
                                     gridTemplateColumns: `repeat(${row.length}, 1fr)`,
                                     gap: 10,
                                 }}
@@ -693,7 +693,12 @@ export default function KeyboardBase({
                                             onClick={(e) => handleKeyPress(char, e)}
                                             style={{
                                                 position: "relative",
-                                                padding: "16px",
+                                                height: "100%",
+                                                width: "100%",
+                                                padding: "0",
+                                                display: "flex",
+                                                justifyContent: "center",
+                                                alignItems: "center",
                                                 fontSize: "26px",
                                                 borderRadius: 8,
                                                 transition: "all 0.15s ease",
@@ -807,6 +812,7 @@ export default function KeyboardBase({
                     onSelect={handleVowelSelect}
                     onClose={() => setVowelPopup(null)}
                     position={vowelPopup.position}
+                    keyboardWidth={kbSize.width}
                     onControlClick={(label) => {
                         if (label === "More") {
                             setVowelMoreClicks((m) => m + 1);

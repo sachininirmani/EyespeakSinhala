@@ -8,6 +8,7 @@ interface VowelPopupProps {
     onClose: () => void;
     position: { top: number; left: number };
     onControlClick?: (label: "More" | "Back" | "Close") => void;
+    keyboardWidth: number;
 }
 
 const VowelPopup: React.FC<VowelPopupProps> = ({
@@ -16,6 +17,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                                                    onClose,
                                                    position,
                                                    onControlClick,
+                                                   keyboardWidth
                                                }) => {
     const DIACRITICS_PER_STAGE = 6;
 
@@ -35,9 +37,12 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
         return predictions.slice(start, start + DIACRITICS_PER_STAGE);
     }, [predictions, page]);
 
-    const radius = 200;
+    const baseRadius = 150;
+    const scale = Math.max(0.6, Math.min(keyboardWidth / 900, 1.8));
+    const radius = baseRadius * scale;
+
     const innerRadius = radius * 0.65;
-    const btnSize = 90;
+    const btnSize = 50 * scale;
 
     const placements = useMemo(
         () => computeVowelPlacementsForPage(pageItems),
@@ -97,7 +102,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     // NEW: showClose if on first page
     const showClose = page === 0;
 
-    const halfButtonSize = 80;
+    const halfButtonSize = (btnSize / 2) + 20;
     const gap = 7;
 
     const activeColor = "#ffe08a";
