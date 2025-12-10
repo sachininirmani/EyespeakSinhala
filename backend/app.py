@@ -9,12 +9,15 @@ CORS(app)
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
+
 DB_PATH = os.path.join(DATA_DIR, "evaluation.db")
+
 
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def table_has_column(conn, table, column):
     cur = conn.cursor()
@@ -22,31 +25,33 @@ def table_has_column(conn, table, column):
     cols = [r[1] for r in cur.fetchall()]
     return column in cols
 
+
 def ensure_column(conn, table, column, coldef):
     if not table_has_column(conn, table, column):
         cur = conn.cursor()
         cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
         conn.commit()
 
+
 def init_db():
     conn = db()
     cur = conn.cursor()
-    # sessions
+
+    # SESSIONS TABLE
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             participant_id TEXT,
+            participant_name TEXT,
+            participant_age TEXT,
+            familiarity TEXT,
+            wears_specks TEXT,
             layouts_json TEXT,
             created_at INTEGER
         )
     """)
-    # migrate: add extended participant metadata (safe if already exists)
-    ensure_column(conn, "sessions", "participant_name", "TEXT")
-    ensure_column(conn, "sessions", "participant_age", "TEXT")
-    ensure_column(conn, "sessions", "familiarity", "TEXT")
-    ensure_column(conn, "sessions", "wears_specks", "TEXT")
 
-    # trials
+    # TRIALS TABLE
     cur.execute("""
         CREATE TABLE IF NOT EXISTS trials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,13 +79,8 @@ def init_db():
             created_at INTEGER
         )
     """)
-    # add columns if migrating an existing DB
-    ensure_column(conn, "trials", "prompt", "TEXT")
-    ensure_column(conn, "trials", "word_count", "INTEGER")
-    ensure_column(conn, "trials", "vowel_popup_clicks", "INTEGER")
-    ensure_column(conn, "trials", "vowel_popup_more_clicks", "INTEGER")
 
-    # events
+    # EVENTS TABLE
     cur.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,7 +97,7 @@ def init_db():
         )
     """)
 
-    # sus
+    # SUS TABLE
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sus (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +110,7 @@ def init_db():
         )
     """)
 
-    # feedbacks
+    # FEEDBACK TABLE
     cur.execute("""
         CREATE TABLE IF NOT EXISTS feedbacks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,62 +121,42 @@ def init_db():
         )
     """)
 
-    # ---- Trigger: recompute net_wpm and accuracy_pct after intended_text is updated ----
-    # Uses SQLite JSON1 (bundled in standard SQLite) to split by spaces via a synthetic JSON array.
-    cur.execute("""
-                CREATE TRIGGER IF NOT EXISTS update_metrics_after_intended
-                    AFTER UPDATE OF intended_text
-                    ON trials
-                    FOR EACH ROW
-                BEGIN
-                    -- Only run when intended_text is non-empty
-                    UPDATE trials
-                    SET net_wpm      = CASE
-                                           WHEN length(trim(NEW.intended_text)) > 0 THEN
-                                               (
-                                                   -- count of correct words / duration(min)
-                                                   COALESCE((SELECT COUNT(*)
-                                                             FROM (SELECT value AS w
-                                                                   FROM json_each('["' || REPLACE(NEW.intended_text, ' ', '","') || '"]')
-                                                                   INTERSECT
-                                                                   SELECT value AS w
-                                                                   FROM json_each('["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'))),
-                                                            0) / NULLIF(NEW.duration_ms / 60000.0, 0)
-                                                   )
-                                           ELSE NULL
-                        END,
-                        accuracy_pct = CASE
-                                           WHEN length(trim(NEW.intended_text)) > 0 THEN
-                                               (
-                                                   100.0 * COALESCE((SELECT COUNT(*)
-                                                                     FROM (SELECT value AS w
-                                                                           FROM json_each('["' || REPLACE(NEW.intended_text, ' ', '","') || '"]')
-                                                                           INTERSECT
-                                                                           SELECT value AS w
-                                                                           FROM json_each('["' || REPLACE(NEW.transcribed_text, ' ', '","') || '"]'))),
-                                                                    0)
-                                                       / NULLIF((SELECT COUNT(*)
-                                                                 FROM json_each('["' || REPLACE(NEW.intended_text, ' ', '","') || '"]')),
-                                                                0)
-                                                   )
-                                           ELSE NULL
-                            END
-                    WHERE id = NEW.id;
-                END;
-                """)
-
     conn.commit()
     conn.close()
 
+
 init_db()
 
-# Load Sinhala prompts / models
+# ------------------------------------------------------------
+# PROMPTS: ONE UNIFIED POOL
+# ------------------------------------------------------------
+
+PROMPT_COUNT = 3   # <---- change this anytime to pick N prompts per session
+
 with open(os.path.join(DATA_DIR, "prompts_sinhala.json"), "r", encoding="utf-8") as f:
-    PROMPTS = json.load(f)
+    PROMPT_POOL = json.load(f)["prompts"]
+
+
+@app.get("/prompts")
+def get_prompts():
+    """Return N randomly-selected Sinhala prompts from a single pool."""
+    try:
+        selected = random.sample(PROMPT_POOL, min(PROMPT_COUNT, len(PROMPT_POOL)))
+        return jsonify({"prompts": selected})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ------------------------------------------------------------
+# GAZE & KEYBOARD HELPERS
+# ------------------------------------------------------------
 
 SINHALA_DIACRITICS = set(list("ාැෑිීුූෘෲෙේොෝෞ්ංඃෟ"))
+
+
 def is_diacritic(ch: str) -> bool:
     return ch in SINHALA_DIACRITICS
+
 
 def last_base_consonant(word: str) -> str:
     for ch in reversed(word):
@@ -184,9 +164,40 @@ def last_base_consonant(word: str) -> str:
             return ch
     return ""
 
+
 def get_last_word(text: str) -> str:
     return text.strip().split(" ")[-1] if text.strip() else ""
 
+
+# ------------------------------------------------------------
+# LEVENSHTEIN (MSD) HELPER
+# ------------------------------------------------------------
+def levenshtein(a: str, b: str) -> int:
+    """
+    Compute Levenshtein (Minimum String Distance) between two strings.
+
+    This is used for:
+      - MSD-based character-level accuracy
+      - Net WPM (penalizing errors as wrong characters)
+    """
+    n, m = len(a), len(b)
+    if n > m:
+        # Ensure n <= m to use less space
+        a, b = b, a
+        n, m = m, n
+
+    current = list(range(n + 1))
+    for i in range(1, m + 1):
+        previous, current = current, [i] + [0] * n
+        for j in range(1, n + 1):
+            add = previous[j] + 1       # deletion in a (or insertion in b)
+            delete = current[j - 1] + 1  # insertion in a (or deletion in b)
+            change = previous[j - 1] + (a[j - 1] != b[i - 1])  # substitution
+            current[j] = min(add, delete, change)
+    return current[n]
+
+
+# WORD PREDICTION FILES
 with open(os.path.join(DATA_DIR, "word_frequency_clean.txt"), "r", encoding="utf-8") as f:
     corpus_words = f.read().splitlines()
 
@@ -196,6 +207,7 @@ with open(os.path.join(DATA_DIR, "vowel_bigrams.json"), "r", encoding="utf-8") a
 with open(os.path.join(DATA_DIR, "vowel_combination_map_Most_Used.json"), "r", encoding="utf-8") as f:
     vowel_prediction_map = json.load(f)
 
+
 @app.get("/predict/word")
 def predict_word():
     prefix = request.args.get("prefix", "")
@@ -203,6 +215,7 @@ def predict_word():
         return jsonify([])
     predictions = [w for w in corpus_words if w.startswith(prefix)]
     return jsonify(predictions[:5])
+
 
 @app.get("/predict/vowel")
 def predict_vowel():
@@ -223,84 +236,92 @@ def predict_vowel():
     suggestions = vowel_prediction_map.get(key, [])
     return jsonify(suggestions[:30])
 
-@app.get("/prompts")
-def get_prompts():
-    """Return randomized prompt subset (4 one-word + 3 composition)."""
-    try:
-        one_word_all = PROMPTS.get("one_word", [])
-        composition_all = PROMPTS.get("composition", [])
 
-        one_word_sample = random.sample(one_word_all, min(4, len(one_word_all)))
-        composition_sample = random.sample(composition_all, min(3, len(composition_all)))
-
-        return jsonify({
-            "one_word": one_word_sample,
-            "composition": composition_sample
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+# ------------------------------------------------------------
+# SESSION START
+# ------------------------------------------------------------
 @app.post("/session/start")
 def session_start():
     data = request.get_json(force=True)
+
     participant_id = data.get("participant_id")
     participant_name = data.get("participant_name", "")
     participant_age = data.get("participant_age", "")
     familiarity = data.get("familiarity", "No")
     wears_specks = data.get("wears_specks", "No")
     layouts = data.get("layouts", ["eyespeak", "wijesekara", "helakuru"])
+
     now = int(time.time()*1000)
+
     conn = db()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO sessions (participant_id, participant_name, participant_age, familiarity, wears_specks, layouts_json, created_at)
+        INSERT INTO sessions (participant_id, participant_name, participant_age,
+            familiarity, wears_specks, layouts_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (participant_id, participant_name, participant_age, familiarity, wears_specks, json.dumps(layouts, ensure_ascii=False), now))
+    """, (
+        participant_id, participant_name, participant_age,
+        familiarity, wears_specks, json.dumps(layouts, ensure_ascii=False), now
+    ))
     sid = cur.lastrowid
     conn.commit()
     conn.close()
+
     return jsonify({
         "session_id": sid,
         "participant_id": participant_id,
-        "participant_name": participant_name,
-        "participant_age": participant_age,
-        "familiarity": familiarity,
-        "wears_specks": wears_specks,
         "layouts": layouts
     })
 
+
+# ------------------------------------------------------------
+# EVENTS BULK INSERT
+# ------------------------------------------------------------
 @app.post("/events/bulk")
 def events_bulk():
     data = request.get_json(force=True)
     rows = data.get("events", [])
     if not rows:
         return jsonify({"ok": True, "count": 0})
-    conn = db(); cur = conn.cursor()
+
+    conn = db()
+    cur = conn.cursor()
     cur.executemany("""
-        INSERT INTO events (session_id, participant_id, layout_id, round_id, ts_ms, event_type, x, y, key, is_delete)
+        INSERT INTO events (session_id, participant_id, layout_id, round_id,
+            ts_ms, event_type, x, y, key, is_delete)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, [
-        (r.get("session_id"), r.get("participant_id"), r.get("layout_id"), r.get("round_id"),
-         r.get("ts_ms"), r.get("event_type"), r.get("x"), r.get("y"), r.get("key"), 1 if r.get("is_delete") else 0)
+        (r.get("session_id"), r.get("participant_id"), r.get("layout_id"),
+         r.get("round_id"), r.get("ts_ms"), r.get("event_type"),
+         r.get("x"), r.get("y"), r.get("key"), 1 if r.get("is_delete") else 0)
         for r in rows
     ])
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
+
     return jsonify({"ok": True, "count": len(rows)})
 
+
+# ------------------------------------------------------------
+# TRIAL SUBMISSION + METRIC CALCULATIONS
+# ------------------------------------------------------------
 @app.post("/trial/submit")
 def trial_submit():
     d = request.get_json(force=True)
+
     session_id = d["session_id"]
     participant_id = d["participant_id"]
     layout_id = d["layout_id"]
     round_id = d["round_id"]
-    prompt_id = d.get("prompt_id","")
-    prompt = d.get("prompt","")
-    intended_text = d.get("intended_text","")
-    transcribed_text = d.get("transcribed_text","")
+    prompt_id = d.get("prompt_id", "")
+    prompt = d.get("prompt", "")
+    intended_text = d.get("intended_text", "")
+    transcribed_text = d.get("transcribed_text", "")
+
     dwell_main_ms = int(d.get("dwell_main_ms", 600))
     dwell_popup_ms = d.get("dwell_popup_ms", 450)
     duration_ms = int(d.get("duration_ms", 0))
+
     total_keystrokes = int(d.get("total_keystrokes", 0))
     deletes = int(d.get("deletes", 0))
     eye_distance_px = float(d.get("eye_distance_px", 0.0))
@@ -308,25 +329,71 @@ def trial_submit():
     vowel_popup_clicks = int(d.get("vowel_popup_clicks", 0))
     vowel_popup_more_clicks = int(d.get("vowel_popup_more_clicks", 0))
 
-    # wijesekara has no vowel popup: store as NULL
+    # WIJESAKARA HAS NO POPUP
     if layout_id == "wijesekara":
         dwell_popup_ms = None
 
-    chars = len(transcribed_text)
+    # ---------------------------
+    # TEXT-ENTRY METRICS (STANDARD, MAC-KENZIE STYLE)
+    # ---------------------------
+    # Time in minutes (avoid division by zero)
     t_min = max(0.0001, duration_ms / 60000.0)
 
-    # Gross WPM: total words per minute (including mistakes)
-    gross_wpm = (word_count / t_min) if word_count > 0 else 0.0
+    # Number of characters typed in the transcribed text
+    chars_transcribed = len(transcribed_text)
 
-    # KSPC
-    kspc = (total_keystrokes / max(1, chars))
+    # MSD (Levenshtein) errors between intended and transcribed text.
+    # This counts the minimum number of insertions, deletions, and substitutions
+    # needed to transform one string into the other.
+    msd_errors = levenshtein(intended_text, transcribed_text)
 
-    # net_wpm / accuracy are computed later via trigger when intended_text is filled.
-    net_wpm = None
-    accuracy_pct = None
+    # --- Gross WPM ---
+    # Standard formula used in text-entry research:
+    #   Gross WPM = ((|T| - 1) / 5) / t_min
+    # where:
+    #   |T|   = number of transcribed characters
+    #   5     = standard average characters per word
+    #   t_min = time in minutes
+    #
+    # The "-1" removes the final ENTER or completion keystroke.
+    base_chars = max(chars_transcribed - 1, 0)
+    gross_wpm = (base_chars / 5.0) / t_min if chars_transcribed > 0 else 0.0
+
+    # --- Accuracy (MSD-based character-level accuracy) ---
+    #   Accuracy = (1 - MSD / max(|I|, |T|)) * 100
+    # where:
+    #   |I|, |T| are lengths of intended and transcribed strings.
+    # This measures how many characters are effectively correct.
+    max_len = max(len(intended_text), chars_transcribed)
+    if max_len > 0:
+        accuracy_pct = (1.0 - (msd_errors / max_len)) * 100.0
+        # Numerical safety: clamp tiny negatives to 0
+        if accuracy_pct < 0.0:
+            accuracy_pct = 0.0
+    else:
+        accuracy_pct = None  # No text to compare
+
+    # --- Net WPM ---
+    # One common "net" variant is to treat MSD errors as wrong characters
+    # that reduce the effective number of correctly entered characters:
+    #
+    #   Effective chars = max((|T| - 1) - MSD, 0)
+    #   Net WPM = (Effective chars / 5) / t_min
+    #
+    # This preserves the WPM units while penalizing errors.
+    effective_chars = max(base_chars - msd_errors, 0)
+    net_wpm = (effective_chars / 5.0) / t_min if chars_transcribed > 0 else 0.0
+
+    # --- KSPC (Keystrokes Per Character) ---
+    #   KSPC = Total keystrokes / |T|
+    # Here total_keystrokes should include all actions that produce or
+    # correct text (including deletes, popup selections, etc.).
+    kspc = total_keystrokes / max(1, chars_transcribed)
 
     now = int(time.time()*1000)
-    conn = db(); cur = conn.cursor()
+
+    conn = db()
+    cur = conn.cursor()
     cur.execute("""
         INSERT INTO trials (
             session_id, participant_id, layout_id, round_id, prompt_id, prompt,
@@ -340,12 +407,12 @@ def trial_submit():
     """, (
         session_id, participant_id, layout_id, round_id, prompt_id, prompt,
         intended_text, transcribed_text,
-        dwell_main_ms, dwell_popup_ms, duration_ms,
-        total_keystrokes, deletes, eye_distance_px,
-        word_count, vowel_popup_clicks, vowel_popup_more_clicks,
+        dwell_main_ms, dwell_popup_ms, duration_ms, total_keystrokes, deletes,
+        eye_distance_px, word_count, vowel_popup_clicks, vowel_popup_more_clicks,
         gross_wpm, net_wpm, accuracy_pct, kspc, now
     ))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
     return jsonify({
         "ok": True,
@@ -357,6 +424,10 @@ def trial_submit():
         }
     })
 
+
+# ------------------------------------------------------------
+# SUS SUBMISSION
+# ------------------------------------------------------------
 @app.post("/sus/submit")
 def sus_submit():
     d = request.get_json(force=True)
@@ -370,44 +441,52 @@ def sus_submit():
 
     score = 0
     for i, v in enumerate(items):
-        if (i % 2) == 0:
+        if i % 2 == 0:
             score += (v - 1)
         else:
             score += (5 - v)
-    sus_score = score * 2.5
 
+    sus_score = score * 2.5
     now = int(time.time()*1000)
-    conn = db(); cur = conn.cursor()
+
+    conn = db()
+    cur = conn.cursor()
     cur.execute("""
         INSERT INTO sus (session_id, participant_id, layout_id, items_json, sus_score, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (session_id, participant_id, layout_id, json.dumps(items, ensure_ascii=False), sus_score, now))
-    conn.commit(); conn.close()
+    """, (session_id, participant_id, layout_id, json.dumps(items, ensure_ascii=False),
+          sus_score, now))
+    conn.commit()
+    conn.close()
 
     return jsonify({"ok": True, "sus_score": sus_score})
 
+
+# ------------------------------------------------------------
+# FEEDBACK + SESSION EXPORT
+# ------------------------------------------------------------
 @app.post("/feedback/submit")
 def feedback_submit():
     d = request.get_json(force=True)
-    session_id = d.get("session_id")
-    participant_id = d.get("participant_id")
+    session_id = d["session_id"]
+    participant_id = d["participant_id"]
     feedback_text = d.get("feedback", "")
 
     now = int(time.time()*1000)
-    conn = db(); cur = conn.cursor()
+
+    conn = db()
+    cur = conn.cursor()
     cur.execute("""
         INSERT INTO feedbacks (session_id, participant_id, feedback, created_at)
         VALUES (?, ?, ?, ?)
     """, (session_id, participant_id, feedback_text, now))
-    conn.commit()
 
-    # Build a full JSON export for the session (Sinhala-safe)
+    # Export full session
     export = {}
 
     # session
     cur.execute("SELECT * FROM sessions WHERE id=?", (session_id,))
-    row = cur.fetchone()
-    export["session"] = dict(row) if row else {}
+    export["session"] = dict(cur.fetchone())
 
     # trials
     cur.execute("SELECT * FROM trials WHERE session_id=?", (session_id,))
@@ -429,9 +508,14 @@ def feedback_submit():
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(export, f, ensure_ascii=False, indent=2)
 
+    conn.commit()
     conn.close()
+
     return jsonify({"ok": True, "path": json_path})
 
+
+# ------------------------------------------------------------
+# RUN
+# ------------------------------------------------------------
 if __name__ == "__main__":
-    # Flask dev server
     app.run(host="0.0.0.0", port=5000, debug=True)

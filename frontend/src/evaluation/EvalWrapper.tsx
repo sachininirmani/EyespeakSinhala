@@ -55,9 +55,12 @@ export default function EvalWrapper() {
     const [layouts, setLayouts] = useState<LayoutId[]>([]);
     const [layoutIndex, setLayoutIndex] = useState(0);
 
-    // Prompts (stable per phase)
+    // Prompts (stable for the whole session)
     const [phasePrompts, setPhasePrompts] = useState<PromptSet | null>(null);
     const [promptIndex, setPromptIndex] = useState(0);
+
+    // NEW: track whether prompts have been fetched for this session
+    const promptsFetchedRef = useRef(false);
 
     // Typing telemetry
     const [currentText, setCurrentText] = useState("");
@@ -80,20 +83,26 @@ export default function EvalWrapper() {
 
     // Derived
     const currentLayout = layouts[layoutIndex];
-    const allOneWord = phasePrompts?.one_word ?? [];
-    const allSentences = phasePrompts?.composition ?? [];
-    const allPromptsForPhase = useMemo(
-        () => [...allOneWord, ...allSentences],
-        [allOneWord, allSentences]
-    );
+    const allPromptsForPhase = phasePrompts?.prompts ?? [];
+
     const totalPromptsThisPhase = allPromptsForPhase.length;
     const currentPrompt =
-        allPromptsForPhase[promptIndex % Math.max(1, totalPromptsThisPhase)];
+        allPromptsForPhase.length > 0
+            ? allPromptsForPhase[promptIndex]
+            : "";
+
 
     // Start session
     async function beginSession() {
         const randomized = getRandomizedLayouts(); // random order for this user/session
         setLayouts(randomized);
+
+        // NEW: reset prompts for a fresh session
+        setPhasePrompts(null);
+        promptsFetchedRef.current = false;
+        setPromptIndex(0);
+        setLayoutIndex(0);
+
         const s = await startSession(
             participant,
             randomized,
@@ -106,17 +115,16 @@ export default function EvalWrapper() {
         setPhase("biascalibration");
     }
 
-    // Load prompts once per phase (per layoutIndex)
-    const fetchedForLayoutRef = useRef<number | null>(null);
+    // Load prompts ONCE per session (first time we enter familiarization)
     useEffect(() => {
-        if (phase === "familiarize" && layoutIndex !== fetchedForLayoutRef.current) {
+        if (phase === "familiarize" && !promptsFetchedRef.current) {
             getPrompts().then((p) => {
                 setPhasePrompts(p);
                 setPromptIndex(0);
-                fetchedForLayoutRef.current = layoutIndex;
+                promptsFetchedRef.current = true;
             });
         }
-    }, [phase, layoutIndex]);
+    }, [phase]);
 
     function finishBiasCalibration() {
         setPhase("familiarize");
@@ -163,7 +171,7 @@ export default function EvalWrapper() {
             round_id: `layout${layoutIndex}_round${promptIndex}`,
             prompt_id: `prompt_${promptIndex}`,
             prompt: currentPrompt,                 // keep prompt separately
-            intended_text: "",
+            intended_text: currentPrompt,          // NEW: intended = prompt (copy task)
             transcribed_text: currentText,
             dwell_main_ms: dwellMain,
             dwell_popup_ms: currentLayout === "wijesekara" ? null : dwellPopup,
@@ -222,6 +230,8 @@ export default function EvalWrapper() {
                 setLayouts([]);
                 setLayoutIndex(0);
                 setPromptIndex(0);
+                setPhasePrompts(null);            // NEW: reset prompts for next participant
+                promptsFetchedRef.current = false; // NEW
                 setPhase("setup");
             }
         };
@@ -496,6 +506,30 @@ export default function EvalWrapper() {
                         flexDirection: "column",
                     }}
                 >
+                    {/* NEW: show the prompt clearly above the keyboard */}
+                    <div
+                        className="card"
+                        style={{
+                            marginBottom: 12,
+                            maxWidth: 900,
+                            alignSelf: "center",
+                            position: "absolute",
+                            top: 30,
+                            left: 45,
+                        }}
+                    >
+                        <h3 style={{ marginBottom: 4 }}>Please copy this text exactly:</h3>
+                        <p
+                            style={{
+                                fontSize: 22,
+                                lineHeight: 1.4,
+                                margin: 0,
+                            }}
+                        >
+                            {currentPrompt}
+                        </p>
+                    </div>
+
                     <KeyboardLoader
                         layoutId={currentLayout}
                         dwellMainMs={dwellMain}

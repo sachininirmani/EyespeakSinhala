@@ -11,6 +11,6 @@ export interface Session {
 }
 
 export interface PromptSet {
-  composition: string[];
-  one_word: string[];
+  prompts: string[];
 }
+

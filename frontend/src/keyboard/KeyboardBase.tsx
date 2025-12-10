@@ -220,6 +220,7 @@ export default function KeyboardBase({
         position: { top: number; left: number };
     } | null>(null);
     const [activeKey, setActiveKey] = useState<string | null>(null);
+    const [activeControl, setActiveControl] = useState<string | null>(null);
     const [showBias, setShowBias] = useState(false);
 
     const [totalKeys, setTotalKeys] = useState(0);
@@ -274,6 +275,11 @@ export default function KeyboardBase({
     const triggerKeyFlash = (key: string) => {
         setActiveKey(key);
         setTimeout(() => setActiveKey(null), 180);
+    };
+
+    const triggerControlFlash = (id: string) => {
+        setActiveControl(id);
+        setTimeout(() => setActiveControl(null), 180);
     };
 
     const getCurrentLayout = () => {
@@ -752,22 +758,26 @@ export default function KeyboardBase({
                 >
                     <button
                         onClick={() => {
-                            triggerKeyFlash(
-                                isSecondStage ? "⇠ First Set" : "⇢ Second Set"
-                            );
+                            triggerControlFlash("stageToggle");
                             setIsSecondStage((p) => !p);
                             setVowelPopup(null);
                             setTotalKeys((k) => k + 1);
                             emit(typedText);
                         }}
-                        style={controlButtonStyle}
+                        style={{
+                            ...controlButtonStyle,
+                            backgroundColor:
+                                activeControl === "stageToggle"
+                                    ? "#e1be4a"
+                                    : controlButtonStyle.backgroundColor,
+                        }}
                     >
                         {isSecondStage ? "⇠ First Set" : "⇢ Second Set"}
                     </button>
 
                     <button
                         onClick={() => {
-                            triggerKeyFlash("Space");
+                            triggerControlFlash("space");
                             const next = typedText + " ";
                             setTypedText(next);
                             setVowelPopup(null);
@@ -775,14 +785,21 @@ export default function KeyboardBase({
                             setIsSecondStage(false); // reset to first stage after finishing word
                             emit(next);
                         }}
-                        style={{ ...controlButtonStyle, flex: 2 }}
+                        style={{
+                            ...controlButtonStyle,
+                            flex: 2,
+                            backgroundColor:
+                                activeControl === "space"
+                                    ? "#e1be4a"
+                                    : controlButtonStyle.backgroundColor,
+                        }}
                     >
                         Space
                     </button>
 
                     <button
                         onClick={() => {
-                            triggerKeyFlash("⌫ Delete");
+                            triggerControlFlash("delete");
                             const next = typedText.slice(0, -1);
                             setTypedText(next);
                             setVowelPopup(null);
@@ -790,14 +807,29 @@ export default function KeyboardBase({
                             setTotalKeys((k) => k + 1);
                             emit(next);
                         }}
-                        style={controlButtonStyle}
+                        style={{
+                            ...controlButtonStyle,
+                            backgroundColor:
+                                activeControl === "delete"
+                                    ? "#ec8c76"
+                                    : controlButtonStyle.backgroundColor,
+                        }}
                     >
                         ⌫ Delete
                     </button>
 
                     <button
-                        onClick={() => setShowBias(true)}
-                        style={controlButtonStyle}
+                        onClick={() => {
+                            triggerControlFlash("bias");
+                            setShowBias(true);
+                        }}
+                        style={{
+                            ...controlButtonStyle,
+                            backgroundColor:
+                                activeControl === "bias"
+                                    ? "#e1be4a"
+                                    : controlButtonStyle.backgroundColor,
+                        }}
                     >
                         Bias Adjust
                     </button>
