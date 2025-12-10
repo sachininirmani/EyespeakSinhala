@@ -30,8 +30,8 @@ export default function EvalWrapper() {
     const [participant, setParticipant] = useState("P001");
     const [participantName, setParticipantName] = useState("");
     const [participantAge, setParticipantAge] = useState("");
-    const [familiarity, setFamiliarity] = useState("No");
-    const [wearsSpecks, setWearsSpecks] = useState("No");
+    const [familiarity, setFamiliarity] = useState("Never");
+    const wearsSpecks = "NA";
 
     // Session & data
     const [session, setSession] = useState<Session | null>(null);
@@ -59,7 +59,7 @@ export default function EvalWrapper() {
     const [phasePrompts, setPhasePrompts] = useState<PromptSet | null>(null);
     const [promptIndex, setPromptIndex] = useState(0);
 
-    // NEW: track whether prompts have been fetched for this session
+    // Track whether prompts have been fetched for this session
     const promptsFetchedRef = useRef(false);
 
     // Typing telemetry
@@ -91,13 +91,11 @@ export default function EvalWrapper() {
             ? allPromptsForPhase[promptIndex]
             : "";
 
-
     // Start session
     async function beginSession() {
-        const randomized = getRandomizedLayouts(); // random order for this user/session
+        const randomized = getRandomizedLayouts();
         setLayouts(randomized);
 
-        // NEW: reset prompts for a fresh session
         setPhasePrompts(null);
         promptsFetchedRef.current = false;
         setPromptIndex(0);
@@ -108,14 +106,14 @@ export default function EvalWrapper() {
             randomized,
             participantName,
             participantAge,
-            familiarity,
-            wearsSpecks
+            familiarity,  //  Sinhala keyboard usage frequency
+            wearsSpecks   // now constant "NA"
         );
         setSession(s);
         setPhase("biascalibration");
     }
 
-    // Load prompts ONCE per session (first time we enter familiarization)
+    // Load prompts once per session
     useEffect(() => {
         if (phase === "familiarize" && !promptsFetchedRef.current) {
             getPrompts().then((p) => {
@@ -159,30 +157,35 @@ export default function EvalWrapper() {
         const end = performance.now();
         const durMs = Math.max(0, end - (startTime ?? end));
 
-        // word count by spaces
+        // word count
         const wordCount = currentText.trim().length
             ? currentText.trim().split(/\s+/).length
             : 0;
 
-        await submitTrial({
-            session_id: session?.session_id,
-            participant_id: participant,
-            layout_id: currentLayout,
-            round_id: `layout${layoutIndex}_round${promptIndex}`,
-            prompt_id: `prompt_${promptIndex}`,
-            prompt: currentPrompt,                 // keep prompt separately
-            intended_text: currentPrompt,          // NEW: intended = prompt (copy task)
-            transcribed_text: currentText,
-            dwell_main_ms: dwellMain,
-            dwell_popup_ms: currentLayout === "wijesekara" ? null : dwellPopup,
-            duration_ms: durMs,
-            total_keystrokes: live.total_keystrokes,
-            deletes: live.deletes,
-            eye_distance_px: live.eye_distance_px,
-            word_count: wordCount,
-            vowel_popup_clicks: live.vowel_popup_clicks,
-            vowel_popup_more_clicks: live.vowel_popup_more_clicks,
-        });
+        // Skip saving trial if this is the first prompt (familiarization)
+        const isPracticePrompt = promptIndex === 0;
+
+        if (!isPracticePrompt) {
+            await submitTrial({
+                session_id: session?.session_id,
+                participant_id: participant,
+                layout_id: currentLayout,
+                round_id: `layout${layoutIndex}_round${promptIndex}`,
+                prompt_id: `prompt_${promptIndex}`,
+                prompt: currentPrompt,
+                intended_text: currentPrompt,
+                transcribed_text: currentText,
+                dwell_main_ms: dwellMain,
+                dwell_popup_ms: currentLayout === "wijesekara" ? null : dwellPopup,
+                duration_ms: durMs,
+                total_keystrokes: live.total_keystrokes,
+                deletes: live.deletes,
+                eye_distance_px: live.eye_distance_px,
+                word_count: wordCount,
+                vowel_popup_clicks: live.vowel_popup_clicks,
+                vowel_popup_more_clicks: live.vowel_popup_more_clicks,
+            });
+        }
 
         if (promptIndex + 1 < totalPromptsThisPhase) {
             setPromptIndex((p) => p + 1);
@@ -208,7 +211,6 @@ export default function EvalWrapper() {
             setLayoutIndex(nextIndex);
             setPromptIndex(0);
 
-            // Reset dwell times to default when new phase begins
             setDwellMain(600);
             setDwellPopup(450);
 
@@ -218,7 +220,6 @@ export default function EvalWrapper() {
         }
     }
 
-    // Handle Enter key on session end
     useEffect(() => {
         if (phase !== "done") return;
 
@@ -230,8 +231,8 @@ export default function EvalWrapper() {
                 setLayouts([]);
                 setLayoutIndex(0);
                 setPromptIndex(0);
-                setPhasePrompts(null);            // NEW: reset prompts for next participant
-                promptsFetchedRef.current = false; // NEW
+                setPhasePrompts(null);
+                promptsFetchedRef.current = false;
                 setPhase("setup");
             }
         };
@@ -301,27 +302,20 @@ export default function EvalWrapper() {
                             />
                         </div>
 
+                        {/* UPDATED FIELD */}
                         <div>
                             <div className="label">
-                                Familiar with Eye-Controlled Keyboards?
+                                How often do you use Wijesekara / Helakuru Sinhala?
                             </div>
                             <select
                                 value={familiarity}
                                 onChange={(e) => setFamiliarity(e.target.value)}
                             >
-                                <option value="No">No</option>
-                                <option value="Yes">Yes</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <div className="label">Wears Specks?</div>
-                            <select
-                                value={wearsSpecks}
-                                onChange={(e) => setWearsSpecks(e.target.value)}
-                            >
-                                <option value="No">No</option>
-                                <option value="Yes">Yes</option>
+                                <option value="Never">Never</option>
+                                <option value="Rarely">Rarely</option>
+                                <option value="Sometimes">Sometimes</option>
+                                <option value="Often">Often</option>
+                                <option value="Very Often">Very Often</option>
                             </select>
                         </div>
                     </div>
@@ -425,7 +419,6 @@ export default function EvalWrapper() {
                             step={50}
                             label="Main Dwell (ms)"
                         />
-
                     )}
                     <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
                         <GazeDwellButton
@@ -454,6 +447,14 @@ export default function EvalWrapper() {
                     <div className="card" style={{ marginBottom: 16 }}>
                         <h3 style={{ marginBottom: 8 }}>Prompt {promptIndex + 1}</h3>
                         <p style={{ fontSize: 22, marginBottom: 6 }}>{currentPrompt}</p>
+
+                        {/* FIRST PROMPT NOTICE */}
+                        {promptIndex === 0 && (
+                            <p style={{ fontSize: 16, color: "#1d4ed8" }}>
+                                Note: This first prompt is only for familiarization.
+                                Your answer will not be saved.
+                            </p>
+                        )}
 
                         <div
                             style={{
@@ -506,7 +507,6 @@ export default function EvalWrapper() {
                         flexDirection: "column",
                     }}
                 >
-                    {/* NEW: show the prompt clearly above the keyboard */}
                     <div
                         className="card"
                         style={{

@@ -44,12 +44,13 @@ def init_db():
             participant_id TEXT,
             participant_name TEXT,
             participant_age TEXT,
-            familiarity TEXT,
-            wears_specks TEXT,
+            sinhala_usage TEXT,
             layouts_json TEXT,
             created_at INTEGER
         )
     """)
+    # Ensure new column exists for older databases
+    ensure_column(conn, "sessions", "sinhala_usage", "TEXT")
 
     # TRIALS TABLE
     cur.execute("""
@@ -247,8 +248,9 @@ def session_start():
     participant_id = data.get("participant_id")
     participant_name = data.get("participant_name", "")
     participant_age = data.get("participant_age", "")
-    familiarity = data.get("familiarity", "No")
-    wears_specks = data.get("wears_specks", "No")
+    # Frontend currently sends this field as "familiarity", but we interpret it
+    # as Sinhala keyboard usage frequency (Wijesekara / Helakuru).
+    sinhala_usage = data.get("sinhala_usage", data.get("familiarity", ""))
     layouts = data.get("layouts", ["eyespeak", "wijesekara", "helakuru"])
 
     now = int(time.time()*1000)
@@ -257,11 +259,11 @@ def session_start():
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO sessions (participant_id, participant_name, participant_age,
-            familiarity, wears_specks, layouts_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            sinhala_usage, layouts_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
     """, (
         participant_id, participant_name, participant_age,
-        familiarity, wears_specks, json.dumps(layouts, ensure_ascii=False), now
+        sinhala_usage, json.dumps(layouts, ensure_ascii=False), now
     ))
     sid = cur.lastrowid
     conn.commit()
