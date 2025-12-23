@@ -46,11 +46,13 @@ def init_db():
             participant_age TEXT,
             sinhala_usage TEXT,
             layouts_json TEXT,
+            keyboard_size TEXT,
             created_at INTEGER
         )
     """)
-    # Ensure new column exists for older databases
+    # Ensure new columns exist for older databases
     ensure_column(conn, "sessions", "sinhala_usage", "TEXT")
+    ensure_column(conn, "sessions", "keyboard_size", "TEXT")
 
     # TRIALS TABLE
     cur.execute("""
@@ -183,7 +185,6 @@ def levenshtein(a: str, b: str) -> int:
     """
     n, m = len(a), len(b)
     if n > m:
-        # Ensure n <= m to use less space
         a, b = b, a
         n, m = m, n
 
@@ -191,9 +192,9 @@ def levenshtein(a: str, b: str) -> int:
     for i in range(1, m + 1):
         previous, current = current, [i] + [0] * n
         for j in range(1, n + 1):
-            add = previous[j] + 1       # deletion in a (or insertion in b)
-            delete = current[j - 1] + 1  # insertion in a (or deletion in b)
-            change = previous[j - 1] + (a[j - 1] != b[i - 1])  # substitution
+            add = previous[j] + 1
+            delete = current[j - 1] + 1
+            change = previous[j - 1] + (a[j - 1] != b[i - 1])
             current[j] = min(add, delete, change)
     return current[n]
 
@@ -248,22 +249,26 @@ def session_start():
     participant_id = data.get("participant_id")
     participant_name = data.get("participant_name", "")
     participant_age = data.get("participant_age", "")
-    # Frontend currently sends this field as "familiarity", but we interpret it
-    # as Sinhala keyboard usage frequency (Wijesekara / Helakuru).
     sinhala_usage = data.get("sinhala_usage", data.get("familiarity", ""))
     layouts = data.get("layouts", ["eyespeak", "wijesekara", "helakuru"])
+
+    # NEW: keyboard size preset (s / m / l)
+    keyboard_size = data.get("keyboard_size", "m")
 
     now = int(time.time()*1000)
 
     conn = db()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO sessions (participant_id, participant_name, participant_age,
-            sinhala_usage, layouts_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO sessions (
+            participant_id, participant_name, participant_age,
+            sinhala_usage, layouts_json, keyboard_size, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
         participant_id, participant_name, participant_age,
-        sinhala_usage, json.dumps(layouts, ensure_ascii=False), now
+        sinhala_usage, json.dumps(layouts, ensure_ascii=False),
+        keyboard_size, now
     ))
     sid = cur.lastrowid
     conn.commit()
@@ -272,7 +277,8 @@ def session_start():
     return jsonify({
         "session_id": sid,
         "participant_id": participant_id,
-        "layouts": layouts
+        "layouts": layouts,
+        "keyboard_size": keyboard_size
     })
 
 
@@ -409,8 +415,9 @@ def trial_submit():
     """, (
         session_id, participant_id, layout_id, round_id, prompt_id, prompt,
         intended_text, transcribed_text,
-        dwell_main_ms, dwell_popup_ms, duration_ms, total_keystrokes, deletes,
-        eye_distance_px, word_count, vowel_popup_clicks, vowel_popup_more_clicks,
+        dwell_main_ms, dwell_popup_ms, duration_ms,
+        total_keystrokes, deletes, eye_distance_px,
+        word_count, vowel_popup_clicks, vowel_popup_more_clicks,
         gross_wpm, net_wpm, accuracy_pct, kspc, now
     ))
     conn.commit()

@@ -18,7 +18,9 @@ export default function Keyboard({
             layoutId={layoutId}
             dwellMainMs={dwellMainMs}
             dwellPopupMs={dwellPopupMs}
-            onChange={onChange}
+            onChange={(t) => onChange(t)}
+            evaluationMode={false}
+            keyboardSizePreset={"m"}
         />
     );
 }

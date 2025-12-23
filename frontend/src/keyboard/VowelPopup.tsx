@@ -9,6 +9,7 @@ interface VowelPopupProps {
     position: { top: number; left: number };
     onControlClick?: (label: "More" | "Back" | "Close") => void;
     keyboardWidth: number;
+    scaleBoost?: number;
 }
 
 const VowelPopup: React.FC<VowelPopupProps> = ({
@@ -17,7 +18,8 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                                                    onClose,
                                                    position,
                                                    onControlClick,
-                                                   keyboardWidth
+                                                   keyboardWidth,
+                                                   scaleBoost = 1.0
                                                }) => {
     const DIACRITICS_PER_STAGE = 6;
 
@@ -38,7 +40,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
     }, [predictions, page]);
 
     const baseRadius = 130;
-    const scale = Math.max(1.2, Math.min(keyboardWidth / 1000, 1.9));
+    const scale = Math.max(1.2, Math.min((keyboardWidth / 1000) * scaleBoost, 2.3));
     const radius = baseRadius * scale;
 
     const innerRadius = radius * 0.65;

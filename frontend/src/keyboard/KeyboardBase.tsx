@@ -38,6 +38,24 @@ let globalKeyboardSize: KeyboardSize = {
     height: 450,
 };
 
+type KeyboardSizePreset = "s" | "m" | "l";
+
+/**
+ * Predefined keyboard footprints for a user session.
+ * NOTE: Width/height ratio is constant across presets.
+ *
+ *  - s: 1400 x 350  (ratio 4.0)
+ *  - m: 1600 x 400  (ratio 4.0)
+ *  - l: 1800 x 450  (ratio 4.0)
+ *
+ */
+const KEYBOARD_SIZE_PRESETS: Record<KeyboardSizePreset, KeyboardSize> = {
+    s: { width: 1400, height: 350 },
+    m: { width: 1600, height: 400 },
+    l: { width: 1800, height: 450 },
+
+};
+
 /**
  * Sinhala vowel + diacritic combination map
  * Combines vowel and diacritic into a single independent vowel
@@ -195,6 +213,8 @@ export default function KeyboardBase({
                                          dwellMainMs,
                                          dwellPopupMs,
                                          onChange,
+                                         evaluationMode = false,
+                                         keyboardSizePreset = "m",
                                      }: {
     layout: {
         columns?: number;
@@ -208,6 +228,8 @@ export default function KeyboardBase({
     dwellMainMs: number;
     dwellPopupMs: number;
     onChange?: (text: string, metrics: Metrics) => void;
+    evaluationMode?: boolean;
+    keyboardSizePreset?: KeyboardSizePreset;
 }) {
     // ---------- STATE ----------
     const [typedText, setTypedText] = useState("");
@@ -218,10 +240,25 @@ export default function KeyboardBase({
     const [vowelPopup, setVowelPopup] = useState<{
         options: string[];
         position: { top: number; left: number };
+        scaleBoost: number;
     } | null>(null);
     const [activeKey, setActiveKey] = useState<string | null>(null);
     const [activeControl, setActiveControl] = useState<string | null>(null);
     const [showBias, setShowBias] = useState(false);
+
+    const [lastAction, setLastAction] = useState<
+        | null
+        | { type: "popup"; prevText: string; base: string; position: { top: number; left: number } }
+        | { type: "prediction"; prevText: string }
+        | { type: "char" }
+    >(null);
+
+    const [lastVowelAnchor, setLastVowelAnchor] = useState<{
+        base: string;
+        prefix: string;
+        position: { top: number; left: number };
+        scaleBoost: number;
+    } | null>(null);
 
     const [totalKeys, setTotalKeys] = useState(0);
     const [deleteCount, setDeleteCount] = useState(0);
@@ -237,6 +274,14 @@ export default function KeyboardBase({
 
     // shared, resizable keyboard size
     const [kbSize, setKbSize] = useState<KeyboardSize>(globalKeyboardSize);
+
+    // Apply predefined keyboard footprint (per session) when provided.
+    useEffect(() => {
+        const preset = KEYBOARD_SIZE_PRESETS[keyboardSizePreset] ?? KEYBOARD_SIZE_PRESETS.m;
+        globalKeyboardSize = preset;
+        setKbSize(preset);
+    }, [keyboardSizePreset]);
+
     const resizeContainerRef = useRef<HTMLDivElement | null>(null);
 
     const gazeData = useGaze();
@@ -289,6 +334,10 @@ export default function KeyboardBase({
     };
 
     const fetchWordPredictions = async (prefix: string) => {
+        if (evaluationMode) {
+            setSuggestions([]);
+            return;
+        }
         try {
             const res = await axios.get("http://localhost:5000/predict/word", {
                 params: { prefix },
@@ -312,7 +361,8 @@ export default function KeyboardBase({
     const fetchVowelPredictions = async (
         prefix: string,
         char: string,
-        e: React.MouseEvent
+        e: React.MouseEvent | null,
+        positionOverride?: { top: number; left: number }
     ) => {
         // char is the base consonant / cluster the user just typed (e.g., "ක", "ක්‍ර")
         const base = char;
@@ -344,13 +394,37 @@ export default function KeyboardBase({
             }
 
             if (ordered.length > 0 && containerRef.current) {
-                const rect = (e.target as HTMLElement).getBoundingClientRect();
-                setVowelPopup({
-                    options: ordered,
-                    position: {
+                let pos = positionOverride;
+
+                if (!pos && e) {
+                    const rect = (e.target as HTMLElement).getBoundingClientRect();
+                    pos = {
                         top: rect.top - containerRef.current.offsetTop,
                         left: rect.left - containerRef.current.offsetLeft,
-                    },
+                    };
+                }
+
+                if (!pos) {
+                    setVowelPopup(null);
+                    return;
+                }
+
+                const scaleBoost =
+                    pos.left < kbSize.width * 0.2 || pos.left > kbSize.width * 0.8
+                        ? 1.25
+                        : 1.0;
+
+                setLastVowelAnchor({
+                    base,
+                    prefix,
+                    position: pos,
+                    scaleBoost,
+                });
+
+                setVowelPopup({
+                    options: ordered,
+                    position: pos,
+                    scaleBoost,
                 });
             } else {
                 setVowelPopup(null);
@@ -397,6 +471,7 @@ export default function KeyboardBase({
     const handleKeyPress = async (char: string, e: React.MouseEvent) => {
         triggerKeyFlash(char);
         setTotalKeys((k) => k + 1);
+        setLastAction({ type: "char" });
         const chosen =
             layout.id === "wijesekara" ? chooseWijesekaraChar(char) : char;
         appendWithSinhalaCompose(chosen);
@@ -405,10 +480,13 @@ export default function KeyboardBase({
         const lastPrefix = words[words.length - 1];
 
         await fetchWordPredictions(lastPrefix);
-        if (layout.hasVowelPopup) await fetchVowelPredictions(lastPrefix, chosen, e);
+        if (layout.hasVowelPopup) await fetchVowelPredictions(lastPrefix, chosen, e, undefined);
     };
 
     const handleSuggestionClick = (word: string) => {
+        if (evaluationMode) return;
+        const prevText = typedText;
+        setLastAction({ type: "prediction", prevText });
         setTotalKeys((k) => k + 1);
         const parts = typedText.trim().split(" ");
         parts[parts.length - 1] = word;
@@ -421,6 +499,17 @@ export default function KeyboardBase({
     };
 
     const handleVowelSelect = async (vowelChunk: string) => {
+        const prevText = typedText;
+        if (lastVowelAnchor) {
+            setLastAction({
+                type: "popup",
+                prevText,
+                base: lastVowelAnchor.base,
+                position: lastVowelAnchor.position,
+            });
+        } else {
+            setLastAction({ type: "char" });
+        }
         setVowelClicks((v) => v + 1);
         setTotalKeys((k) => k + 1);
         const newText = typedText.slice(0, -1) + vowelChunk;
@@ -450,6 +539,7 @@ export default function KeyboardBase({
 
     // Resizable container: keep global footprint synced for all layouts
     useEffect(() => {
+        if (evaluationMode) return;
         const el = resizeContainerRef.current;
         if (!el || typeof ResizeObserver === "undefined") return;
 
@@ -516,6 +606,8 @@ export default function KeyboardBase({
                     alignItems: "center",
                     gap: 10,
                     marginBottom: 16,
+                    marginLeft: "auto",
+                    marginRight: "auto",
                     padding: "6px 4px",
                     background: "#f8fbff",
                     border: "1px solid #e1ecff",
@@ -524,7 +616,11 @@ export default function KeyboardBase({
                     whiteSpace: "nowrap",
                 }}
             >
-                {suggestions.length === 0 ? (
+                {evaluationMode ? (
+                    <span style={{ color: "#94a3b8", fontStyle: "italic" }}>
+                        Predictions are disabled in evaluation mode.
+                    </span>
+                ) : suggestions.length === 0 ? (
                     <span style={{ color: "#94a3b8", fontStyle: "italic" }}>
                         Suggestions will appear here…
                     </span>
@@ -551,12 +647,14 @@ export default function KeyboardBase({
             <div
                 ref={resizeContainerRef}
                 style={{
-                    resize: "both",
+                    resize: evaluationMode ? "none" : "both",
                     overflow: "auto",
                     border: "1px solid #e2e8f0",
                     borderRadius: 10,
                     padding: 10,
                     marginBottom: 16,
+                    marginLeft: "auto",
+                    marginRight: "auto",
                     width: kbSize.width,
                     height: kbSize.height,
                     maxWidth: "100%",
@@ -581,6 +679,11 @@ export default function KeyboardBase({
                 >
                     {rows.map((row, rowIdx) => {
                         const isLastRow = rowIdx === rows.length - 1;
+
+                        // Eyespeak v2/v3/v4: remove *last row* (vowel row) of first-set AFTER first char typed in current word
+                        if (shouldHideVowelRow && isLastRow) {
+                            return null;
+                        }
 
                         // --- Wijesekara LAST ROW: center 8 keys within a 10-col grid ---
                         if (layout.id === "wijesekara" && isLastRow) {
@@ -689,10 +792,6 @@ export default function KeyboardBase({
                                             : null;
                                     const isDual = !!secondaryChar;
 
-                                    // Eyespeak v2/v3/v4: hide *last row* of first-set vowel row AFTER first char typed in current word
-                                    const hideThisKey =
-                                        shouldHideVowelRow && isLastRow;
-
                                     return (
                                         <button
                                             key={`key-${rowIdx}-${colIdx}`}
@@ -713,16 +812,7 @@ export default function KeyboardBase({
                                                         ? "#b3e6ff"
                                                         : "#fdfdfd",
                                                 border: "1px solid #ccc",
-                                                // Keep row height/width the same while hiding the key
-                                                visibility: hideThisKey
-                                                    ? "hidden"
-                                                    : "visible",
-                                                pointerEvents: hideThisKey
-                                                    ? "none"
-                                                    : "auto",
                                             }}
-                                            aria-hidden={hideThisKey}
-                                            tabIndex={hideThisKey ? -1 : 0}
                                         >
                                             <span>{char}</span>
                                             {isDual && (
@@ -762,6 +852,7 @@ export default function KeyboardBase({
                             setIsSecondStage((p) => !p);
                             setVowelPopup(null);
                             setTotalKeys((k) => k + 1);
+                            setLastAction({ type: "char" });
                             emit(typedText);
                         }}
                         style={{
@@ -782,6 +873,7 @@ export default function KeyboardBase({
                             setTypedText(next);
                             setVowelPopup(null);
                             setTotalKeys((k) => k + 1);
+                            setLastAction({ type: "char" });
                             setIsSecondStage(false); // reset to first stage after finishing word
                             emit(next);
                         }}
@@ -800,9 +892,53 @@ export default function KeyboardBase({
                     <button
                         onClick={() => {
                             triggerControlFlash("delete");
+
+                            // Smart delete / undo rules:
+                            // 1) If last action was a popup diacritic selection -> undo whole combined grapheme and reopen popup once.
+                            // 2) If last action was a predicted completion -> undo the whole inserted word.
+                            // 3) Else -> normal delete (remove last typed character).
+                            if (lastAction?.type === "prediction") {
+                                const next = lastAction.prevText;
+                                setTypedText(next);
+                                setSuggestions([]);
+                                setVowelPopup(null);
+                                setLastAction(null);
+                                setDeleteCount((d) => d + 1);
+                                setTotalKeys((k) => k + 1);
+                                emit(next);
+                                return;
+                            }
+
+                            if (lastAction?.type === "popup") {
+                                const next = lastAction.prevText;
+                                setTypedText(next);
+                                setSuggestions([]);
+                                setVowelPopup(null);
+                                setLastAction(null);
+
+                                // Reopen the vowel popup immediately for correction (only once).
+                                if (layout.hasVowelPopup) {
+                                    const words = next.trim().split(" ");
+                                    const lastPrefix = words.length ? words[words.length - 1] : "";
+                                    fetchVowelPredictions(
+                                        lastPrefix,
+                                        lastAction.base,
+                                        null,
+                                        lastAction.position
+                                    );
+                                }
+
+                                setDeleteCount((d) => d + 1);
+                                setTotalKeys((k) => k + 1);
+                                emit(next);
+                                return;
+                            }
+
                             const next = typedText.slice(0, -1);
                             setTypedText(next);
+                            setSuggestions([]);
                             setVowelPopup(null);
+                            setLastAction({ type: "char" });
                             setDeleteCount((d) => d + 1);
                             setTotalKeys((k) => k + 1);
                             emit(next);
@@ -845,6 +981,7 @@ export default function KeyboardBase({
                     onClose={() => setVowelPopup(null)}
                     position={vowelPopup.position}
                     keyboardWidth={kbSize.width}
+                    scaleBoost={vowelPopup.scaleBoost}
                     onControlClick={(label) => {
                         if (label === "More") {
                             setVowelMoreClicks((m) => m + 1);

@@ -15,6 +15,8 @@ export function getRandomizedLayouts(): LayoutId[] {
     return layouts;
 }
 
+type KeyboardSizePreset = "s" | "m" | "l";
+
 type Metrics = {
     total_keystrokes: number;
     deletes: number;
@@ -31,12 +33,16 @@ export default function KeyboardLoader({
                                            layoutId,
                                            dwellMainMs,
                                            dwellPopupMs,
-                                           onChange
+                                           onChange,
+                                           evaluationMode = false,
+                                           keyboardSizePreset = "m"
                                        }: {
     layoutId: LayoutId;
     dwellMainMs: number;
     dwellPopupMs: number; // for wijesekara you may pass 0; popup is disabled internally
     onChange: (text: string, metrics: Metrics) => void;
+    evaluationMode?: boolean;
+    keyboardSizePreset?: KeyboardSizePreset;
 }) {
     const layout = ALL_KEYBOARDS.find((l) => l.id === layoutId);
 
@@ -61,6 +67,8 @@ export default function KeyboardLoader({
             dwellMainMs={dwellMainMs}
             dwellPopupMs={dwellPopupMs}
             onChange={onChange}
+            evaluationMode={evaluationMode}
+            keyboardSizePreset={keyboardSizePreset}
         />
     );
 }

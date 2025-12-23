@@ -19,6 +19,8 @@ export default function KeyboardDirect() {
                 layoutId={layoutId as any}
                 dwellMainMs={600}
                 dwellPopupMs={450}
+                evaluationMode={false}
+                keyboardSizePreset={"m"}
                 onChange={(t, m) => {
                     setText(t);
                     setMetrics(m);

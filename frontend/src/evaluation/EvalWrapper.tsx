@@ -40,6 +40,9 @@ export default function EvalWrapper() {
     const [dwellMain, setDwellMain] = useState(600);
     const [dwellPopup, setDwellPopup] = useState<number | null>(450);
 
+    // Keyboard size preset (per session)
+    const [keyboardSizePreset, setKeyboardSizePreset] = useState<"s" | "m" | "l">("m");
+
     // State tracking
     const [phase, setPhase] = useState<
         | "setup"
@@ -320,6 +323,20 @@ export default function EvalWrapper() {
                         </div>
                     </div>
 
+                    <div className="row" style={{ gap: 16, flexWrap: "wrap", marginTop: 10 }}>
+                        <div>
+                            <div className="label">Keyboard Size (Session)</div>
+                            <select
+                                value={keyboardSizePreset}
+                                onChange={(e) => setKeyboardSizePreset(e.target.value as any)}
+                            >
+                                <option value="s">Small (s)</option>
+                                <option value="m">Medium (m)</option>
+                                <option value="l">Large (l)</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <div className="row" style={{ marginTop: 8 }}>
                         <div>
                             <div className="label">Randomized Layout Order</div>
@@ -533,6 +550,8 @@ export default function EvalWrapper() {
                     <KeyboardLoader
                         layoutId={currentLayout}
                         dwellMainMs={dwellMain}
+                        evaluationMode={true}
+                        keyboardSizePreset={keyboardSizePreset}
                         dwellPopupMs={currentLayout === "wijesekara" ? 0 : (dwellPopup ?? 450)}
                         onChange={(text, metrics) => {
                             setCurrentText(text);
