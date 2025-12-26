@@ -40,9 +40,6 @@ export default function EvalWrapper() {
     const [dwellMain, setDwellMain] = useState(600);
     const [dwellPopup, setDwellPopup] = useState<number | null>(450);
 
-    // Keyboard size preset (per session)
-    const [keyboardSizePreset, setKeyboardSizePreset] = useState<"s" | "m" | "l">("m");
-
     // State tracking
     const [phase, setPhase] = useState<
         | "setup"
@@ -93,6 +90,13 @@ export default function EvalWrapper() {
         allPromptsForPhase.length > 0
             ? allPromptsForPhase[promptIndex]
             : "";
+
+    // keyboard size derived per prompt (practice = large)
+    const keyboardSizePreset = useMemo<"s" | "m" | "l">(() => {
+        if (promptIndex === 0) return "l";
+        const cycle: ("l" | "m" | "s")[] = ["l", "m", "s"];
+        return cycle[promptIndex % 3];
+    }, [promptIndex]);
 
     // Start session
     async function beginSession() {
@@ -187,6 +191,7 @@ export default function EvalWrapper() {
                 word_count: wordCount,
                 vowel_popup_clicks: live.vowel_popup_clicks,
                 vowel_popup_more_clicks: live.vowel_popup_more_clicks,
+                keyboard_size: keyboardSizePreset,
             });
         }
 
@@ -323,19 +328,7 @@ export default function EvalWrapper() {
                         </div>
                     </div>
 
-                    <div className="row" style={{ gap: 16, flexWrap: "wrap", marginTop: 10 }}>
-                        <div>
-                            <div className="label">Keyboard Size (Session)</div>
-                            <select
-                                value={keyboardSizePreset}
-                                onChange={(e) => setKeyboardSizePreset(e.target.value as any)}
-                            >
-                                <option value="s">Small (s)</option>
-                                <option value="m">Medium (m)</option>
-                                <option value="l">Large (l)</option>
-                            </select>
-                        </div>
-                    </div>
+                    {/* ❌ REMOVED: keyboard size selector UI */}
 
                     <div className="row" style={{ marginTop: 8 }}>
                         <div>
@@ -536,13 +529,7 @@ export default function EvalWrapper() {
                         }}
                     >
                         <h3 style={{ marginBottom: 4 }}>Please copy this text exactly:</h3>
-                        <p
-                            style={{
-                                fontSize: 22,
-                                lineHeight: 1.4,
-                                margin: 0,
-                            }}
-                        >
+                        <p style={{ fontSize: 22, lineHeight: 1.4, margin: 0 }}>
                             {currentPrompt}
                         </p>
                     </div>
@@ -558,6 +545,7 @@ export default function EvalWrapper() {
                             setLive(metrics);
                         }}
                     />
+
                     <div style={{ marginTop: 16, alignSelf: "center" }}>
                         <button
                             onClick={finishRound}
@@ -566,9 +554,7 @@ export default function EvalWrapper() {
                                 submittingRef.current ? "Saving…" : "Submit this answer"
                             }
                             style={{
-                                backgroundColor: submittingRef.current
-                                    ? "#fca5a5cc"
-                                    : "#fca5a5",
+                                backgroundColor: submittingRef.current ? "#fca5a5cc" : "#fca5a5",
                                 color: "#fff",
                                 border: "none",
                                 borderRadius: 10,
@@ -603,10 +589,7 @@ export default function EvalWrapper() {
 
             {/* ---------------- FEEDBACK ---------------- */}
             {phase === "feedback" && (
-                <div
-                    className="card"
-                    style={{ marginTop: 12, width: "100%", maxWidth: 720 }}
-                >
+                <div className="card" style={{ marginTop: 12, width: "100%", maxWidth: 720 }}>
                     <h3>Final Feedback (normal keyboard)</h3>
                     <p style={{ marginTop: -8, color: "#64748b" }}>
                         Please share any suggestions for improving Eyespeak Sinhala.

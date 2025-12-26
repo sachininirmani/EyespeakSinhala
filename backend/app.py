@@ -46,13 +46,11 @@ def init_db():
             participant_age TEXT,
             sinhala_usage TEXT,
             layouts_json TEXT,
-            keyboard_size TEXT,
             created_at INTEGER
         )
     """)
     # Ensure new columns exist for older databases
     ensure_column(conn, "sessions", "sinhala_usage", "TEXT")
-    ensure_column(conn, "sessions", "keyboard_size", "TEXT")
 
     # TRIALS TABLE
     cur.execute("""
@@ -61,6 +59,7 @@ def init_db():
             session_id INTEGER,
             participant_id TEXT,
             layout_id TEXT,
+            keyboard_size TEXT,
             round_id TEXT,
             prompt_id TEXT,
             prompt TEXT,
@@ -82,6 +81,8 @@ def init_db():
             created_at INTEGER
         )
     """)
+
+    ensure_column(conn, "trials", "keyboard_size", "TEXT")
 
     # EVENTS TABLE
     cur.execute("""
@@ -252,9 +253,6 @@ def session_start():
     sinhala_usage = data.get("sinhala_usage", data.get("familiarity", ""))
     layouts = data.get("layouts", ["eyespeak", "wijesekara", "helakuru"])
 
-    # NEW: keyboard size preset (s / m / l)
-    keyboard_size = data.get("keyboard_size", "m")
-
     now = int(time.time()*1000)
 
     conn = db()
@@ -262,13 +260,13 @@ def session_start():
     cur.execute("""
         INSERT INTO sessions (
             participant_id, participant_name, participant_age,
-            sinhala_usage, layouts_json, keyboard_size, created_at
+            sinhala_usage, layouts_json, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
     """, (
         participant_id, participant_name, participant_age,
         sinhala_usage, json.dumps(layouts, ensure_ascii=False),
-        keyboard_size, now
+        now
     ))
     sid = cur.lastrowid
     conn.commit()
@@ -277,8 +275,7 @@ def session_start():
     return jsonify({
         "session_id": sid,
         "participant_id": participant_id,
-        "layouts": layouts,
-        "keyboard_size": keyboard_size
+        "layouts": layouts
     })
 
 
@@ -320,6 +317,7 @@ def trial_submit():
     session_id = d["session_id"]
     participant_id = d["participant_id"]
     layout_id = d["layout_id"]
+    keyboard_size = d.get("keyboard_size", "m")
     round_id = d["round_id"]
     prompt_id = d.get("prompt_id", "")
     prompt = d.get("prompt", "")
@@ -404,16 +402,16 @@ def trial_submit():
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO trials (
-            session_id, participant_id, layout_id, round_id, prompt_id, prompt,
+            session_id, participant_id, layout_id, keyboard_size, round_id, prompt_id, prompt,
             intended_text, transcribed_text,
             dwell_main_ms, dwell_popup_ms, duration_ms,
             total_keystrokes, deletes, eye_distance_px,
             word_count, vowel_popup_clicks, vowel_popup_more_clicks,
             gross_wpm, net_wpm, accuracy_pct, kspc, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        session_id, participant_id, layout_id, round_id, prompt_id, prompt,
+        session_id, participant_id, layout_id, keyboard_size, round_id, prompt_id, prompt,
         intended_text, transcribed_text,
         dwell_main_ms, dwell_popup_ms, duration_ms,
         total_keystrokes, deletes, eye_distance_px,
