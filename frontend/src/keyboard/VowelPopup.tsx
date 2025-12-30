@@ -39,7 +39,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
         return predictions.slice(start, start + DIACRITICS_PER_STAGE);
     }, [predictions, page]);
 
-    const baseRadius = 130;
+    const baseRadius = 110;
     const scale = Math.max(1.2, Math.min((keyboardWidth / 1000) * scaleBoost, 2.3));
     const radius = baseRadius * scale;
 

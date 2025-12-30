@@ -44,15 +44,15 @@ type KeyboardSizePreset = "s" | "m" | "l";
  * Predefined keyboard footprints for a user session.
  * NOTE: Width/height ratio is constant across presets.
  *
- *  - s: 1400 x 350  (ratio 4.0)
- *  - m: 1600 x 400  (ratio 4.0)
- *  - l: 1800 x 450  (ratio 4.0)
+ *     l: { width: 1600, height: 400 },
+ *     m: { width: 1500, height: 375 },
+ *     s: { width: 1400, height: 350 },
  *
  */
 const KEYBOARD_SIZE_PRESETS: Record<KeyboardSizePreset, KeyboardSize> = {
+    l: { width: 1600, height: 400 },
+    m: { width: 1500, height: 375 },
     s: { width: 1400, height: 350 },
-    m: { width: 1600, height: 400 },
-    l: { width: 1800, height: 450 },
 
 };
 
@@ -206,6 +206,7 @@ type Metrics = {
     eye_distance_px: number;
     vowel_popup_clicks: number;
     vowel_popup_more_clicks: number;
+    vowel_popup_close_clicks: number;
 };
 
 export default function KeyboardBase({
@@ -265,6 +266,7 @@ export default function KeyboardBase({
     const [deleteCount, setDeleteCount] = useState(0);
     const [vowelClicks, setVowelClicks] = useState(0);
     const [vowelMoreClicks, setVowelMoreClicks] = useState(0);
+    const [vowelCloseClicks, setVowelCloseClicks] = useState(0);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const [gaze, setGaze] = useState({ x: window.innerWidth / 2, y: 80 });
@@ -315,6 +317,7 @@ export default function KeyboardBase({
             eye_distance_px: eyeDistance,
             vowel_popup_clicks: vowelClicks,
             vowel_popup_more_clicks: vowelMoreClicks,
+            vowel_popup_close_clicks: vowelCloseClicks,
         });
     };
 
@@ -1089,6 +1092,10 @@ export default function KeyboardBase({
                     onControlClick={(label) => {
                         if (label === "More") {
                             setVowelMoreClicks((m) => m + 1);
+                            setTotalKeys((k) => k + 1);
+                            emit(typedText);
+                        } else if (label === "Close") {
+                            setVowelCloseClicks((c) => c + 1);
                             setTotalKeys((k) => k + 1);
                             emit(typedText);
                         } else {

@@ -74,6 +74,7 @@ def init_db():
             word_count INTEGER,
             vowel_popup_clicks INTEGER,
             vowel_popup_more_clicks INTEGER,
+            vowel_popup_close_clicks INTEGER,
             gross_wpm REAL,
             net_wpm REAL,
             accuracy_pct REAL,
@@ -83,6 +84,7 @@ def init_db():
     """)
 
     ensure_column(conn, "trials", "keyboard_size", "TEXT")
+    ensure_column(conn, "trials", "vowel_popup_close_clicks", "INTEGER")
 
     # EVENTS TABLE
     cur.execute("""
@@ -332,12 +334,16 @@ def trial_submit():
     deletes = int(d.get("deletes", 0))
     eye_distance_px = float(d.get("eye_distance_px", 0.0))
     word_count = int(d.get("word_count", 0))
-    vowel_popup_clicks = int(d.get("vowel_popup_clicks", 0))
-    vowel_popup_more_clicks = int(d.get("vowel_popup_more_clicks", 0))
+    vowel_popup_clicks = d.get("vowel_popup_clicks", None)
+    vowel_popup_more_clicks = d.get("vowel_popup_more_clicks", None)
+    vowel_popup_close_clicks = d.get("vowel_popup_close_clicks", None)
 
     # WIJESAKARA HAS NO POPUP
     if layout_id == "wijesekara":
         dwell_popup_ms = None
+        vowel_popup_clicks = None
+        vowel_popup_more_clicks = None
+        vowel_popup_close_clicks = None
 
     # ---------------------------
     # TEXT-ENTRY METRICS (STANDARD, MAC-KENZIE STYLE)
@@ -406,16 +412,16 @@ def trial_submit():
             intended_text, transcribed_text,
             dwell_main_ms, dwell_popup_ms, duration_ms,
             total_keystrokes, deletes, eye_distance_px,
-            word_count, vowel_popup_clicks, vowel_popup_more_clicks,
+            word_count, vowel_popup_clicks, vowel_popup_more_clicks, vowel_popup_close_clicks,
             gross_wpm, net_wpm, accuracy_pct, kspc, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         session_id, participant_id, layout_id, keyboard_size, round_id, prompt_id, prompt,
         intended_text, transcribed_text,
         dwell_main_ms, dwell_popup_ms, duration_ms,
         total_keystrokes, deletes, eye_distance_px,
-        word_count, vowel_popup_clicks, vowel_popup_more_clicks,
+        word_count, vowel_popup_clicks, vowel_popup_more_clicks, vowel_popup_close_clicks,
         gross_wpm, net_wpm, accuracy_pct, kspc, now
     ))
     conn.commit()

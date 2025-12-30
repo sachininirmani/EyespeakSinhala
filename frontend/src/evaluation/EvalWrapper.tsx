@@ -23,6 +23,7 @@ type LiveMetrics = {
     eye_distance_px: number;
     vowel_popup_clicks: number;
     vowel_popup_more_clicks: number;
+    vowel_popup_close_clicks: number;
 };
 
 export default function EvalWrapper() {
@@ -71,6 +72,7 @@ export default function EvalWrapper() {
         eye_distance_px: 0,
         vowel_popup_clicks: 0,
         vowel_popup_more_clicks: 0,
+        vowel_popup_close_clicks: 0,
     });
 
     const [feedback, setFeedback] = useState("");
@@ -150,6 +152,7 @@ export default function EvalWrapper() {
             eye_distance_px: 0,
             vowel_popup_clicks: 0,
             vowel_popup_more_clicks: 0,
+            vowel_popup_close_clicks: 0,
         });
         setStartTime(performance.now());
         setPhase("typing");
@@ -191,6 +194,7 @@ export default function EvalWrapper() {
                 word_count: wordCount,
                 vowel_popup_clicks: live.vowel_popup_clicks,
                 vowel_popup_more_clicks: live.vowel_popup_more_clicks,
+                vowel_popup_close_clicks: live.vowel_popup_close_clicks,
                 keyboard_size: keyboardSizePreset,
             });
         }

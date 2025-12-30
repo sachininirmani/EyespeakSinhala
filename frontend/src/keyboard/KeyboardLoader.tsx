@@ -23,6 +23,7 @@ type Metrics = {
     eye_distance_px: number;
     vowel_popup_clicks: number;
     vowel_popup_more_clicks: number;
+    vowel_popup_close_clicks: number;
 };
 
 /**
