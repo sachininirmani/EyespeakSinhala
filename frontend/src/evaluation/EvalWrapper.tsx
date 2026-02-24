@@ -92,14 +92,14 @@ export default function EvalWrapper() {
         dwell: {},
         hybrid_c: {
             toggle_vowel_popup: "FLICK_DOWN",
-            delete: "DOUBLE_BLINK",
+            delete: "FLICK_RIGHT",
             space: "BLINK",
         },
         dwell_free_c: {
-            select: "FLICK_DOWN",
-            delete: "DOUBLE_BLINK",
-            space: "BLINK",
+            select: "FLICK_LEFT",
             toggle_vowel_popup: "FLICK_DOWN",
+            delete: "FLICK_RIGHT",
+            space: "BLINK",
         },
     });
 
