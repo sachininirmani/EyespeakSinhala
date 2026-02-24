@@ -9,6 +9,7 @@ import {
 import type { LayoutId, PromptSet, Session } from "../types";
 import DwellSliders from "../components/DwellSliders";
 import ReadyScreen from "../components/ReadyScreen";
+import StudyConfigPanel from "./StudyConfigPanel";
 import SUSForm from "../components/SUSForm";
 import KeyboardLoader from "../keyboard/KeyboardLoader";
 import BiasCalibration from "../components/BiasCalibration";
@@ -66,6 +67,45 @@ export default function EvalWrapper() {
             toggle_vowel_popup: "FLICK_DOWN",
         });
 
+    // ---------------- Admin Study Configuration (defaults preserve previous behavior) ----------------
+    // These settings define which layouts/interactions/prompts to include for THIS session.
+    // They are configured in the "Study Configuration (admin)" panel below.
+    const [promptCount, setPromptCount] = useState<2 | 3 | 4>(3);
+
+    // Default for current thesis scope: only top layouts (v2, v4). You can expand later.
+    const [selectedLayouts, setSelectedLayouts] = useState<LayoutId[]>([
+        "eyespeak_v2" as any,
+        "eyespeak_v4" as any,
+    ]);
+
+    // Default: include all three interaction methods (can be narrowed)
+    const [selectedInteractions, setSelectedInteractions] = useState<InteractionId[]>([
+        "dwell",
+        "hybrid_c",
+        "dwell_free_c",
+    ]);
+
+    // Per-interaction mappings (admin configurable).
+    const [interactionMappingsByMode, setInteractionMappingsByMode] = useState<
+        Record<InteractionId, InteractionMapping>
+    >({
+        dwell: {},
+        hybrid_c: {
+            toggle_vowel_popup: "FLICK_DOWN",
+            delete: "DOUBLE_BLINK",
+            space: "BLINK",
+        },
+        dwell_free_c: {
+            select: "FLICK_DOWN",
+            delete: "DOUBLE_BLINK",
+            space: "BLINK",
+            toggle_vowel_popup: "FLICK_DOWN",
+        },
+    });
+
+    // Computed condition order for the running session (layout × interaction)
+    const [conditionInteractions, setConditionInteractions] = useState<InteractionId[]>([]);
+
     // State tracking
     const [phase, setPhase] = useState<
         | "setup"
@@ -118,15 +158,59 @@ export default function EvalWrapper() {
 
     // keyboard size derived per prompt (practice = large)
     const keyboardSizePreset = useMemo<"s" | "m" | "l">(() => {
+        // Footprint sizing rule:
+        // - practice prompt (index 0): Large
+        // - for 4 prompts: first TWO prompts are Large, then Medium -> Small
+        // - for 3 prompts: Large -> Medium -> Small
+        // - for 2 prompts: Large -> Medium
         if (promptIndex === 0) return "l";
-        const cycle: ("l" | "m" | "s")[] = ["l", "m", "s"];
-        return cycle[promptIndex % 3];
-    }, [promptIndex]);
+        if (promptCount === 4) {
+            if (promptIndex === 1) return "l";
+            if (promptIndex === 2) return "m";
+            return "s";
+        }
+        if (promptCount === 2) return "m";
+        return promptIndex === 1 ? "m" : "s";
+    }, [promptIndex, promptCount]);
+
 
     // Start session
+
+    // Build condition order (layout × interaction) for this session based on admin configuration.
+    function buildConditionPlan(): { layout: LayoutId; interaction: InteractionId }[] {
+        const layoutsSrc = selectedLayouts.length ? selectedLayouts : getRandomizedLayouts();
+        const interactionsSrc = selectedInteractions.length ? selectedInteractions : (["dwell"] as InteractionId[]);
+        const blocks: { layout: LayoutId; interaction: InteractionId }[] = [];
+
+        layoutsSrc.forEach((layout) => {
+            interactionsSrc.forEach((interaction) => {
+                blocks.push({ layout, interaction });
+            });
+        });
+
+        // Fisher–Yates shuffle
+        for (let i = blocks.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [blocks[i], blocks[j]] = [blocks[j], blocks[i]];
+        }
+        return blocks;
+    }
+
     async function beginSession() {
-        const randomized = getRandomizedLayouts();
-        setLayouts(randomized);
+        const blocks = buildConditionPlan();
+        const layoutOrder = blocks.map((b) => b.layout);
+        const interactionOrder = blocks.map((b) => b.interaction);
+
+        setLayouts(layoutOrder);
+        setConditionInteractions(interactionOrder);
+
+        // Determine first interaction mode
+        const firstMode = interactionOrder[0] ?? "dwell";
+        const firstMapping = interactionMappingsByMode[firstMode] ?? {};
+
+        // Set React state
+        setInteractionMode(firstMode);
+        setInteractionMapping(firstMapping);
 
         setPhasePrompts(null);
         promptsFetchedRef.current = false;
@@ -135,13 +219,13 @@ export default function EvalWrapper() {
 
         const s = await startSession(
             participant,
-            randomized,
+            layoutOrder,
             participantName,
             participantAge,
             familiarity, // Sinhala keyboard usage frequency
             wearsSpecks, // now constant "NA"
-            interactionMode,
-            interactionMapping
+            firstMode,
+            firstMapping
         );
         setSession(s);
         setPhase("biascalibration");
@@ -151,12 +235,12 @@ export default function EvalWrapper() {
     useEffect(() => {
         if (phase === "familiarize" && !promptsFetchedRef.current) {
             getPrompts().then((p) => {
-                setPhasePrompts(p);
+                setPhasePrompts({ ...(p as any), prompts: (p as any).prompts?.slice(0, promptCount) ?? (p as any).prompts } as any);
                 setPromptIndex(0);
                 promptsFetchedRef.current = true;
             });
         }
-    }, [phase]);
+    }, [phase, promptCount]);
 
     function finishBiasCalibration() {
         setPhase("familiarize");
@@ -253,6 +337,11 @@ export default function EvalWrapper() {
             setLayoutIndex(nextIndex);
             setPromptIndex(0);
 
+            // Keep interaction in sync with condition order
+            const nextMode = conditionInteractions[nextIndex] ?? interactionMode;
+            setInteractionMode(nextMode);
+            setInteractionMapping(interactionMappingsByMode[nextMode] ?? {});
+
             setDwellMain(600);
             setDwellPopup(450);
 
@@ -330,13 +419,15 @@ export default function EvalWrapper() {
             return [
                 "Hybrid mode: typing is still by dwell.",
                 `Vowel popup toggle: look at the consonant then do ${toggle}.`,
-                "Other gestures are disabled in Hybrid for now.",
+                `Space: ${space}.`,
+                `Delete: ${del}.`,
             ];
         }
 
         return [
             "Dwell-free mode: look at the target, then perform a gesture (no dwell).",
             `Select key / suggestion / control: ${select}.`,
+            `Vowel popup toggle: look at the consonant then do ${toggle}.`,
             `Space: ${space}.`,
             `Delete: ${del}.`,
         ];
@@ -423,128 +514,36 @@ export default function EvalWrapper() {
                             </select>
                         </div>
 
-                        {/* NEW: Interaction selection (keeps default dwell if you do nothing) */}
-                        <div style={{ minWidth: 280 }}>
-                            <div className="label">Interaction Method</div>
-                            <select
-                                value={interactionMode}
-                                onChange={(e) => {
-                                    const next = e.target.value as KeyboardInteractionMode;
-                                    setInteractionMode(next);
-
-                                    // Keep mappings, but ensure required defaults exist.
-                                    if (next === "hybrid_c") {
-                                        setInteractionMapping((m) => ({
-                                            ...m,
-                                            toggle_vowel_popup:
-                                                (m.toggle_vowel_popup ?? "FLICK_DOWN") as GazeEventType,
-                                        }));
-                                    }
-                                    if (next === "dwell_free_c") {
-                                        setInteractionMapping((m) => ({
-                                            select: (m.select ?? "FLICK_DOWN") as GazeEventType,
-                                            delete: (m.delete ?? "DOUBLE_BLINK") as GazeEventType,
-                                            space: (m.space ?? "BLINK") as GazeEventType,
-                                            toggle_vowel_popup:
-                                                (m.toggle_vowel_popup ?? "FLICK_DOWN") as GazeEventType,
-                                        }));
-                                    }
-                                }}
-                            >
-                                <option value="dwell">Dwell</option>
-                                <option value="hybrid_c">Hybrid (toggle popup only)</option>
-                                <option value="dwell_free_c">Dwell-free</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    {/* NEW: Mapping configuration */}
-                    <div className="card" style={{ marginTop: 12, width: "100%" }}>
-                        <div className="label">Gaze Gesture Mapping (configurable)</div>
-                        <div style={{ color: "#64748b", fontSize: 14, marginBottom: 10 }}>
-                            These settings control which Tobii gesture triggers each action. Dwell
-                            mode mostly ignores mappings. Hybrid uses only “Toggle Vowel Popup”.
-                        </div>
-
-                        <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
-                            <div>
-                                <div className="label">Select</div>
-                                <select
-                                    disabled={interactionMode === "hybrid_c"}
-                                    value={(interactionMapping.select ?? "FLICK_DOWN") as any}
-                                    onChange={(e) =>
-                                        updateMapping("select", e.target.value as GazeEventType)
-                                    }
-                                >
-                                    {ALL_GAZE_EVENTS.map((ev) => (
-                                        <option key={ev} value={ev}>
-                                            {ev}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <div className="label">Space</div>
-                                <select
-                                    disabled={interactionMode === "hybrid_c"}
-                                    value={(interactionMapping.space ?? "BLINK") as any}
-                                    onChange={(e) =>
-                                        updateMapping("space", e.target.value as GazeEventType)
-                                    }
-                                >
-                                    {ALL_GAZE_EVENTS.map((ev) => (
-                                        <option key={ev} value={ev}>
-                                            {ev}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <div className="label">Delete</div>
-                                <select
-                                    disabled={interactionMode === "hybrid_c"}
-                                    value={(interactionMapping.delete ?? "DOUBLE_BLINK") as any}
-                                    onChange={(e) =>
-                                        updateMapping("delete", e.target.value as GazeEventType)
-                                    }
-                                >
-                                    {ALL_GAZE_EVENTS.map((ev) => (
-                                        <option key={ev} value={ev}>
-                                            {ev}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <div className="label">Toggle Vowel Popup</div>
-                                <select
-                                    value={(interactionMapping.toggle_vowel_popup ?? "FLICK_DOWN") as any}
-                                    onChange={(e) =>
-                                        updateMapping(
-                                            "toggle_vowel_popup",
-                                            e.target.value as GazeEventType
-                                        )
-                                    }
-                                >
-                                    {ALL_GAZE_EVENTS.map((ev) => (
-                                        <option key={ev} value={ev}>
-                                            {ev}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
                     </div>
 
                     <div className="row" style={{ marginTop: 8 }}>
                         <div>
                             <div className="label">Randomized Layout Order</div>
-                            <code>{layouts.join(", ") || "(will randomize on start)"}</code>
+                            <div style={{ maxWidth: "1200px", overflowX: "scroll" }}>
+                                <code style={{ whiteSpace: "nowrap", display: "inline-block" }}>{layouts.length && conditionInteractions.length
+                                    ? layouts
+                                        .map((l, idx) => `${l} × ${conditionInteractions[idx] ?? "dwell"}`)
+                                        .join(", ")
+                                    : selectedLayouts.length && selectedInteractions.length
+                                        ? selectedLayouts
+                                            .flatMap((l) => selectedInteractions.map((i) => `${l} × ${i}`))
+                                            .join(", ")
+                                        : "(will randomize on start)"}</code>
+                            </div>
                         </div>
                     </div>
+
+
+                    <StudyConfigPanel
+                        promptCount={promptCount}
+                        setPromptCount={setPromptCount}
+                        selectedLayouts={selectedLayouts}
+                        setSelectedLayouts={setSelectedLayouts}
+                        selectedInteractions={selectedInteractions}
+                        setSelectedInteractions={setSelectedInteractions}
+                        interactionMappingsByMode={interactionMappingsByMode}
+                        setInteractionMappingsByMode={setInteractionMappingsByMode}
+                    />
 
                     <div style={{ marginTop: 12 }}>
                         <button className="btn primary" onClick={beginSession}>
@@ -649,23 +648,27 @@ export default function EvalWrapper() {
                         </ul>
                     </div>
 
-                    {currentLayout?.includes("eyespeak") ? (
-                        <DwellSliders
-                            main={dwellMain}
-                            popup={dwellPopup ?? 450}
-                            setMain={setDwellMain}
-                            setPopup={(v) => setDwellPopup(v)}
-                        />
-                    ) : (
-                        <DwellSliderSingle
-                            value={dwellMain}
-                            setValue={setDwellMain}
-                            min={200}
-                            max={1200}
-                            step={50}
-                            label="Main Dwell (ms)"
-                        />
-                    )}
+                    {interactionMode !== "dwell_free_c" ? (
+                        currentLayout?.includes("eyespeak") ? (
+                            <DwellSliders
+                                main={dwellMain}
+                                popup={dwellPopup ?? 450}
+                                setMain={setDwellMain}
+                                setPopup={(v) => setDwellPopup(v)}
+                            />
+                        ) : (
+                            <DwellSliderSingle
+                                value={dwellMain}
+                                setValue={setDwellMain}
+                                min={200}
+                                max={1200}
+                                step={50}
+                                label="Main Dwell (ms)"
+                            />
+                        )
+                    ) : null}
+
+
 
                     {isDwellFree && (
                         <div style={{ marginTop: 8, color: "#0f766e", fontSize: 14 }}>
@@ -737,26 +740,30 @@ export default function EvalWrapper() {
                                 </ul>
                             </div>
 
-                            <div style={{ fontSize: 16, marginBottom: 6 }}>
-                                Optional: Adjust dwell time before starting this prompt
-                            </div>
+                            {interactionMode !== "dwell_free_c" && (
+                                <>
+                                    <div style={{ fontSize: 16, marginBottom: 6 }}>
+                                        Optional: Adjust dwell time before starting this prompt
+                                    </div>
 
-                            {currentLayout.includes("eyespeak") ? (
-                                <DwellSliders
-                                    main={dwellMain}
-                                    popup={dwellPopup ?? 450}
-                                    setMain={setDwellMain}
-                                    setPopup={(v) => setDwellPopup(v)}
-                                />
-                            ) : (
-                                <DwellSliderSingle
-                                    value={dwellMain}
-                                    setValue={setDwellMain}
-                                    min={200}
-                                    max={1200}
-                                    step={50}
-                                    label="Main Dwell (ms)"
-                                />
+                                    {currentLayout.includes("eyespeak") ? (
+                                        <DwellSliders
+                                            main={dwellMain}
+                                            popup={dwellPopup ?? 450}
+                                            setMain={setDwellMain}
+                                            setPopup={(v) => setDwellPopup(v)}
+                                        />
+                                    ) : (
+                                        <DwellSliderSingle
+                                            value={dwellMain}
+                                            setValue={setDwellMain}
+                                            min={200}
+                                            max={1200}
+                                            step={50}
+                                            label="Main Dwell (ms)"
+                                        />
+                                    )}
+                                </>
                             )}
                         </div>
 

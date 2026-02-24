@@ -800,6 +800,80 @@ export default function KeyboardBase({
         // DWELL: ignore gestures entirely
     });
 
+
+    // --- Keyboard fallback for gesture-mapped actions (dev / no-eye-tracker) ---
+    // This does NOT replace gaze input. It simply provides alternative triggers so you can test end-to-end
+    // even when Tobii data is unavailable.
+    useEffect(() => {
+        const isEditableTarget = (t: EventTarget | null) => {
+            const el = t as HTMLElement | null;
+            if (!el) return false;
+            const tag = el.tagName?.toLowerCase();
+            return (
+                tag === "input" ||
+                tag === "textarea" ||
+                tag === "select" ||
+                (el as any).isContentEditable === true
+            );
+        };
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            // Don't intercept typing into text fields
+            if (isEditableTarget(e.target)) return;
+
+            // Don't allow keyboard fallbacks during bias overlay
+            if (showBias) return;
+
+            // Basic cooldown to mirror gesture debounce
+            const now = performance.now();
+            if (now < gestureCooldownUntilRef.current) return;
+            gestureCooldownUntilRef.current = now + 220;
+
+            // Map physical keyboard inputs to the same ACTIONS used by gaze events.
+            // If either gaze OR keyboard trigger happens, the mapped action occurs.
+            // Space -> "space" action
+            if (e.code === "Space") {
+                e.preventDefault();
+                handleSpaceAction();
+                return;
+            }
+
+            // Backspace/Delete -> "delete" action
+            if (e.code === "Backspace" || e.code === "Delete") {
+                e.preventDefault();
+                handleDeleteAction();
+                return;
+            }
+
+            // Popup toggle (hybrid / dwell-free testing): "P" (or "O") toggles popup
+            if (e.code === "KeyP" || e.code === "KeyO") {
+                e.preventDefault();
+                toggleVowelPopup();
+                return;
+            }
+
+            // Enter -> "select" action (only meaningful in dwell-free)
+            if (e.code === "Enter" || e.code === "NumpadEnter") {
+                if (isDwellFree) {
+                    e.preventDefault();
+                    clickAtGaze();
+                }
+                return;
+            }
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [
+        showBias,
+        isDwellFree,
+        handleSpaceAction,
+        handleDeleteAction,
+        toggleVowelPopup,
+        clickAtGaze,
+    ]);
+
+
     // ---------------- Render ----------------
     return (
         <div
