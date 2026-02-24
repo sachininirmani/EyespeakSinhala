@@ -1,11 +1,19 @@
 import React, { useState } from "react";
 import { useParams } from "react-router-dom";
 import KeyboardLoader from "./KeyboardLoader";
+import type { InteractionId } from "../interaction/types";
 
 export default function KeyboardDirect() {
     const { layoutId } = useParams();
     const [text, setText] = useState("");
     const [metrics, setMetrics] = useState<any>(null);
+
+    // Optional: debug view can be forced via URL query params
+    //   ?interaction=dwell_free_c
+    //   ?interaction=hybrid_c
+    // Defaults to dwell (preserves existing behavior).
+    const search = new URLSearchParams(window.location.search);
+    const interaction = (search.get("interaction") as InteractionId | null) ?? "dwell";
 
     if (!layoutId) {
         return <div style={{ padding: 20 }}>No layoutId provided.</div>;
@@ -19,6 +27,7 @@ export default function KeyboardDirect() {
                 layoutId={layoutId as any}
                 dwellMainMs={600}
                 dwellPopupMs={450}
+                interactionMode={interaction}
                 evaluationMode={false}
                 keyboardSizePreset={"m"}
                 onChange={(t, m) => {

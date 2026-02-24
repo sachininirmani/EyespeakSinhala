@@ -1,6 +1,8 @@
 import React from "react";
 import KeyboardBase from "./KeyboardBase";
 import { ALL_KEYBOARDS, LayoutId } from "./index";
+import type { InteractionId, InteractionMapping } from "../interaction/types";
+
 
 /**
  * Randomize keyboard order for each session or participant
@@ -34,6 +36,8 @@ export default function KeyboardLoader({
                                            layoutId,
                                            dwellMainMs,
                                            dwellPopupMs,
+                                           interactionMode = "dwell",
+                                           interactionMapping,
                                            onChange,
                                            evaluationMode = false,
                                            keyboardSizePreset = "m"
@@ -41,6 +45,8 @@ export default function KeyboardLoader({
     layoutId: LayoutId;
     dwellMainMs: number;
     dwellPopupMs: number; // for wijesekara you may pass 0; popup is disabled internally
+    interactionMode?: InteractionId;
+    interactionMapping?: InteractionMapping;
     onChange: (text: string, metrics: Metrics) => void;
     evaluationMode?: boolean;
     keyboardSizePreset?: KeyboardSizePreset;
@@ -67,6 +73,8 @@ export default function KeyboardLoader({
             layout={layout}
             dwellMainMs={dwellMainMs}
             dwellPopupMs={dwellPopupMs}
+            interactionMode={interactionMode}
+            interactionMapping={interactionMapping}
             onChange={onChange}
             evaluationMode={evaluationMode}
             keyboardSizePreset={keyboardSizePreset}

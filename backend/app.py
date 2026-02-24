@@ -46,11 +46,15 @@ def init_db():
             participant_age TEXT,
             sinhala_usage TEXT,
             layouts_json TEXT,
+            interaction_id TEXT,
+            interaction_mapping_json TEXT,
             created_at INTEGER
         )
     """)
     # Ensure new columns exist for older databases
     ensure_column(conn, "sessions", "sinhala_usage", "TEXT")
+    ensure_column(conn, "sessions", "interaction_id", "TEXT")
+    ensure_column(conn, "sessions", "interaction_mapping_json", "TEXT")
 
     # TRIALS TABLE
     cur.execute("""
@@ -62,6 +66,7 @@ def init_db():
             keyboard_size TEXT,
             round_id TEXT,
             prompt_id TEXT,
+            prompt_index INTEGER,
             prompt TEXT,
             intended_text TEXT,
             transcribed_text TEXT,
@@ -75,6 +80,8 @@ def init_db():
             vowel_popup_clicks INTEGER,
             vowel_popup_more_clicks INTEGER,
             vowel_popup_close_clicks INTEGER,
+            interaction_id TEXT,
+            interaction_mapping_json TEXT,
             gross_wpm REAL,
             net_wpm REAL,
             accuracy_pct REAL,
@@ -85,6 +92,9 @@ def init_db():
 
     ensure_column(conn, "trials", "keyboard_size", "TEXT")
     ensure_column(conn, "trials", "vowel_popup_close_clicks", "INTEGER")
+    ensure_column(conn, "trials", "prompt_index", "INTEGER")
+    ensure_column(conn, "trials", "interaction_id", "TEXT")
+    ensure_column(conn, "trials", "interaction_mapping_json", "TEXT")
 
     # EVENTS TABLE
     cur.execute("""
@@ -94,6 +104,7 @@ def init_db():
             participant_id TEXT,
             layout_id TEXT,
             round_id TEXT,
+            interaction_id TEXT,
             ts_ms INTEGER,
             event_type TEXT,
             x REAL,
@@ -102,6 +113,7 @@ def init_db():
             is_delete INTEGER
         )
     """)
+    ensure_column(conn, "events", "interaction_id", "TEXT")
 
     # SUS TABLE
     cur.execute("""
@@ -255,19 +267,30 @@ def session_start():
     sinhala_usage = data.get("sinhala_usage", data.get("familiarity", ""))
     layouts = data.get("layouts", ["eyespeak", "wijesekara", "helakuru"])
 
-    now = int(time.time()*1000)
+    # NEW: interaction session-level config (optional)
+    interaction_id = data.get("interaction_id", data.get("interactionMode", "dwell"))
+    interaction_mapping = data.get("interaction_mapping", data.get("interactionMapping", None))
+    interaction_mapping_json = None
+    try:
+        if interaction_mapping is not None:
+            interaction_mapping_json = json.dumps(interaction_mapping, ensure_ascii=False)
+    except Exception:
+        interaction_mapping_json = None
+
+    now = int(time.time() * 1000)
 
     conn = db()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO sessions (
             participant_id, participant_name, participant_age,
-            sinhala_usage, layouts_json, created_at
+            sinhala_usage, layouts_json, interaction_id, interaction_mapping_json, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         participant_id, participant_name, participant_age,
         sinhala_usage, json.dumps(layouts, ensure_ascii=False),
+        interaction_id, interaction_mapping_json,
         now
     ))
     sid = cur.lastrowid
@@ -277,7 +300,9 @@ def session_start():
     return jsonify({
         "session_id": sid,
         "participant_id": participant_id,
-        "layouts": layouts
+        "layouts": layouts,
+        "interaction_id": interaction_id,
+        "interaction_mapping": interaction_mapping
     })
 
 
@@ -295,12 +320,22 @@ def events_bulk():
     cur = conn.cursor()
     cur.executemany("""
         INSERT INTO events (session_id, participant_id, layout_id, round_id,
-            ts_ms, event_type, x, y, key, is_delete)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            interaction_id, ts_ms, event_type, x, y, key, is_delete)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, [
-        (r.get("session_id"), r.get("participant_id"), r.get("layout_id"),
-         r.get("round_id"), r.get("ts_ms"), r.get("event_type"),
-         r.get("x"), r.get("y"), r.get("key"), 1 if r.get("is_delete") else 0)
+        (
+            r.get("session_id"),
+            r.get("participant_id"),
+            r.get("layout_id"),
+            r.get("round_id"),
+            r.get("interaction_id"),
+            r.get("ts_ms"),
+            r.get("event_type"),
+            r.get("x"),
+            r.get("y"),
+            r.get("key"),
+            1 if r.get("is_delete") else 0
+        )
         for r in rows
     ])
     conn.commit()
@@ -322,6 +357,7 @@ def trial_submit():
     keyboard_size = d.get("keyboard_size", "m")
     round_id = d["round_id"]
     prompt_id = d.get("prompt_id", "")
+    prompt_index = d.get("prompt_index", None)
     prompt = d.get("prompt", "")
     intended_text = d.get("intended_text", "")
     transcribed_text = d.get("transcribed_text", "")
@@ -338,6 +374,16 @@ def trial_submit():
     vowel_popup_more_clicks = d.get("vowel_popup_more_clicks", None)
     vowel_popup_close_clicks = d.get("vowel_popup_close_clicks", None)
 
+    # NEW: interaction per-trial (optional)
+    interaction_id = d.get("interaction_id", d.get("interactionMode", None))
+    interaction_mapping = d.get("interaction_mapping", d.get("interactionMapping", None))
+    interaction_mapping_json = None
+    try:
+        if interaction_mapping is not None:
+            interaction_mapping_json = json.dumps(interaction_mapping, ensure_ascii=False)
+    except Exception:
+        interaction_mapping_json = None
+
     # WIJESAKARA HAS NO POPUP
     if layout_id == "wijesekara":
         dwell_popup_ms = None
@@ -348,80 +394,48 @@ def trial_submit():
     # ---------------------------
     # TEXT-ENTRY METRICS (STANDARD, MAC-KENZIE STYLE)
     # ---------------------------
-    # Time in minutes (avoid division by zero)
     t_min = max(0.0001, duration_ms / 60000.0)
-
-    # Number of characters typed in the transcribed text
     chars_transcribed = len(transcribed_text)
-
-    # MSD (Levenshtein) errors between intended and transcribed text.
-    # This counts the minimum number of insertions, deletions, and substitutions
-    # needed to transform one string into the other.
     msd_errors = levenshtein(intended_text, transcribed_text)
 
-    # --- Gross WPM ---
-    # Standard formula used in text-entry research:
-    #   Gross WPM = ((|T| - 1) / 5) / t_min
-    # where:
-    #   |T|   = number of transcribed characters
-    #   5     = standard average characters per word
-    #   t_min = time in minutes
-    #
-    # The "-1" removes the final ENTER or completion keystroke.
     base_chars = max(chars_transcribed - 1, 0)
     gross_wpm = (base_chars / 5.0) / t_min if chars_transcribed > 0 else 0.0
 
-    # --- Accuracy (MSD-based character-level accuracy) ---
-    #   Accuracy = (1 - MSD / max(|I|, |T|)) * 100
-    # where:
-    #   |I|, |T| are lengths of intended and transcribed strings.
-    # This measures how many characters are effectively correct.
     max_len = max(len(intended_text), chars_transcribed)
     if max_len > 0:
         accuracy_pct = (1.0 - (msd_errors / max_len)) * 100.0
-        # Numerical safety: clamp tiny negatives to 0
         if accuracy_pct < 0.0:
             accuracy_pct = 0.0
     else:
-        accuracy_pct = None  # No text to compare
+        accuracy_pct = None
 
-    # --- Net WPM ---
-    # One common "net" variant is to treat MSD errors as wrong characters
-    # that reduce the effective number of correctly entered characters:
-    #
-    #   Effective chars = max((|T| - 1) - MSD, 0)
-    #   Net WPM = (Effective chars / 5) / t_min
-    #
-    # This preserves the WPM units while penalizing errors.
     effective_chars = max(base_chars - msd_errors, 0)
     net_wpm = (effective_chars / 5.0) / t_min if chars_transcribed > 0 else 0.0
 
-    # --- KSPC (Keystrokes Per Character) ---
-    #   KSPC = Total keystrokes / |T|
-    # Here total_keystrokes should include all actions that produce or
-    # correct text (including deletes, popup selections, etc.).
     kspc = total_keystrokes / max(1, chars_transcribed)
 
-    now = int(time.time()*1000)
+    now = int(time.time() * 1000)
 
     conn = db()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO trials (
-            session_id, participant_id, layout_id, keyboard_size, round_id, prompt_id, prompt,
+            session_id, participant_id, layout_id, keyboard_size, round_id, prompt_id, prompt_index, prompt,
             intended_text, transcribed_text,
             dwell_main_ms, dwell_popup_ms, duration_ms,
             total_keystrokes, deletes, eye_distance_px,
             word_count, vowel_popup_clicks, vowel_popup_more_clicks, vowel_popup_close_clicks,
+            interaction_id, interaction_mapping_json,
             gross_wpm, net_wpm, accuracy_pct, kspc, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        session_id, participant_id, layout_id, keyboard_size, round_id, prompt_id, prompt,
+        session_id, participant_id, layout_id, keyboard_size, round_id, prompt_id, prompt_index, prompt,
         intended_text, transcribed_text,
         dwell_main_ms, dwell_popup_ms, duration_ms,
         total_keystrokes, deletes, eye_distance_px,
         word_count, vowel_popup_clicks, vowel_popup_more_clicks, vowel_popup_close_clicks,
+        interaction_id, interaction_mapping_json,
         gross_wpm, net_wpm, accuracy_pct, kspc, now
     ))
     conn.commit()
@@ -460,15 +474,18 @@ def sus_submit():
             score += (5 - v)
 
     sus_score = score * 2.5
-    now = int(time.time()*1000)
+    now = int(time.time() * 1000)
 
     conn = db()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO sus (session_id, participant_id, layout_id, items_json, sus_score, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (session_id, participant_id, layout_id, json.dumps(items, ensure_ascii=False),
-          sus_score, now))
+    """, (
+        session_id, participant_id, layout_id,
+        json.dumps(items, ensure_ascii=False),
+        sus_score, now
+    ))
     conn.commit()
     conn.close()
 
@@ -485,7 +502,7 @@ def feedback_submit():
     participant_id = d["participant_id"]
     feedback_text = d.get("feedback", "")
 
-    now = int(time.time()*1000)
+    now = int(time.time() * 1000)
 
     conn = db()
     cur = conn.cursor()

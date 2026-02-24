@@ -17,6 +17,18 @@ import GazeDwellButton from "../components/GazeDwellButton";
 import DwellSliderSingle from "../components/DwellSliderSingle";
 import GlobalGazeIndicator from "../components/GlobalGazeIndicator";
 
+// Interaction config (dwell / hybrid / dwell-free)
+import type {
+    GazeEventType,
+    InteractionConfig,
+    InteractionId,
+    InteractionMapping,
+} from "../interaction/types";
+
+// Keep this local to avoid coupling EvalWrapper to KeyboardLoader's internal types.
+// Must match your InteractionId union ("dwell" | "dwell_free_c" | "hybrid_c").
+type KeyboardInteractionMode = InteractionId;
+
 type LiveMetrics = {
     total_keystrokes: number;
     deletes: number;
@@ -40,6 +52,19 @@ export default function EvalWrapper() {
     // Dwell timing
     const [dwellMain, setDwellMain] = useState(600);
     const [dwellPopup, setDwellPopup] = useState<number | null>(450);
+
+    // Interaction selection + mapping (defaults preserve existing dwell behavior)
+    const [interactionMode, setInteractionMode] =
+        useState<KeyboardInteractionMode>("dwell");
+    const [interactionMapping, setInteractionMapping] =
+        useState<InteractionMapping>({
+            // Dwell: mapping is mostly ignored (dwell triggers selection)
+            // Hybrid: only toggle_vowel_popup is used
+            // Dwell-free: look at target then gesture triggers the action
+            delete: "DOUBLE_BLINK",
+            space: "BLINK",
+            toggle_vowel_popup: "FLICK_DOWN",
+        });
 
     // State tracking
     const [phase, setPhase] = useState<
@@ -89,9 +114,7 @@ export default function EvalWrapper() {
 
     const totalPromptsThisPhase = allPromptsForPhase.length;
     const currentPrompt =
-        allPromptsForPhase.length > 0
-            ? allPromptsForPhase[promptIndex]
-            : "";
+        allPromptsForPhase.length > 0 ? allPromptsForPhase[promptIndex] : "";
 
     // keyboard size derived per prompt (practice = large)
     const keyboardSizePreset = useMemo<"s" | "m" | "l">(() => {
@@ -115,8 +138,10 @@ export default function EvalWrapper() {
             randomized,
             participantName,
             participantAge,
-            familiarity,  //  Sinhala keyboard usage frequency
-            wearsSpecks   // now constant "NA"
+            familiarity, // Sinhala keyboard usage frequency
+            wearsSpecks, // now constant "NA"
+            interactionMode,
+            interactionMapping
         );
         setSession(s);
         setPhase("biascalibration");
@@ -196,6 +221,11 @@ export default function EvalWrapper() {
                 vowel_popup_more_clicks: live.vowel_popup_more_clicks,
                 vowel_popup_close_clicks: live.vowel_popup_close_clicks,
                 keyboard_size: keyboardSizePreset,
+
+                // NEW: interaction details (saved later in DB)
+                interaction_id: interactionConfig.id,
+                interaction_label: interactionConfig.label,
+                interaction_mapping: interactionConfig.mapping,
             });
         }
 
@@ -256,6 +286,71 @@ export default function EvalWrapper() {
     const gazeIndicatorActive =
         phase === "familiarize" || phase === "ready" || phase === "sus";
 
+    const isDwellFree = interactionMode === "dwell_free_c";
+    const isHybrid = interactionMode === "hybrid_c";
+    const isDwell = interactionMode === "dwell";
+
+    const interactionLabel = useMemo(() => {
+        if (interactionMode === "dwell") return "Dwell";
+        if (interactionMode === "hybrid_c") return "Hybrid";
+        return "Dwell-free";
+    }, [interactionMode]);
+
+    const ALL_GAZE_EVENTS: GazeEventType[] = useMemo(
+        () => [
+            "FLICK_RIGHT",
+            "FLICK_LEFT",
+            "FLICK_DOWN",
+            "BLINK",
+            "DOUBLE_BLINK",
+            "WINK_LEFT",
+            "WINK_RIGHT",
+        ],
+        []
+    );
+
+    const updateMapping = (k: keyof InteractionMapping, v: GazeEventType) => {
+        setInteractionMapping((m) => ({ ...m, [k]: v }));
+    };
+
+    const interactionInstructions = useMemo(() => {
+        const select = interactionMapping.select ?? "FLICK_DOWN";
+        const del = interactionMapping.delete ?? "DOUBLE_BLINK";
+        const space = interactionMapping.space ?? "BLINK";
+        const toggle = interactionMapping.toggle_vowel_popup ?? "FLICK_DOWN";
+
+        if (interactionMode === "dwell") {
+            return [
+                "Dwell mode: just look at a key until it activates.",
+                "Space/Delete/Stage toggle work using the on-screen controls.",
+            ];
+        }
+
+        if (interactionMode === "hybrid_c") {
+            return [
+                "Hybrid mode: typing is still by dwell.",
+                `Vowel popup toggle: look at the consonant then do ${toggle}.`,
+                "Other gestures are disabled in Hybrid for now.",
+            ];
+        }
+
+        return [
+            "Dwell-free mode: look at the target, then perform a gesture (no dwell).",
+            `Select key / suggestion / control: ${select}.`,
+            `Space: ${space}.`,
+            `Delete: ${del}.`,
+        ];
+    }, [interactionMode, interactionMapping]);
+
+    const interactionConfig: InteractionConfig = useMemo(() => {
+        const id: InteractionId = interactionMode;
+        return {
+            id,
+            label: interactionLabel,
+            mapping: interactionMapping,
+        } as any;
+    }, [interactionMode, interactionLabel, interactionMapping]);
+
     return (
         <div
             id="eval-scroll-container"
@@ -273,10 +368,7 @@ export default function EvalWrapper() {
             }}
         >
             {/* Global gaze indicator for familiarization, ready & SUS */}
-            <GlobalGazeIndicator
-                active={gazeIndicatorActive}
-                layoutId={currentLayout}
-            />
+            <GlobalGazeIndicator active={gazeIndicatorActive} layoutId={currentLayout} />
 
             <h2>Eyespeak Sinhala — Evaluation Runner</h2>
 
@@ -330,9 +422,122 @@ export default function EvalWrapper() {
                                 <option value="Very Often">Very Often</option>
                             </select>
                         </div>
+
+                        {/* NEW: Interaction selection (keeps default dwell if you do nothing) */}
+                        <div style={{ minWidth: 280 }}>
+                            <div className="label">Interaction Method</div>
+                            <select
+                                value={interactionMode}
+                                onChange={(e) => {
+                                    const next = e.target.value as KeyboardInteractionMode;
+                                    setInteractionMode(next);
+
+                                    // Keep mappings, but ensure required defaults exist.
+                                    if (next === "hybrid_c") {
+                                        setInteractionMapping((m) => ({
+                                            ...m,
+                                            toggle_vowel_popup:
+                                                (m.toggle_vowel_popup ?? "FLICK_DOWN") as GazeEventType,
+                                        }));
+                                    }
+                                    if (next === "dwell_free_c") {
+                                        setInteractionMapping((m) => ({
+                                            select: (m.select ?? "FLICK_DOWN") as GazeEventType,
+                                            delete: (m.delete ?? "DOUBLE_BLINK") as GazeEventType,
+                                            space: (m.space ?? "BLINK") as GazeEventType,
+                                            toggle_vowel_popup:
+                                                (m.toggle_vowel_popup ?? "FLICK_DOWN") as GazeEventType,
+                                        }));
+                                    }
+                                }}
+                            >
+                                <option value="dwell">Dwell</option>
+                                <option value="hybrid_c">Hybrid (toggle popup only)</option>
+                                <option value="dwell_free_c">Dwell-free</option>
+                            </select>
+                        </div>
                     </div>
 
-                    {/* ❌ REMOVED: keyboard size selector UI */}
+                    {/* NEW: Mapping configuration */}
+                    <div className="card" style={{ marginTop: 12, width: "100%" }}>
+                        <div className="label">Gaze Gesture Mapping (configurable)</div>
+                        <div style={{ color: "#64748b", fontSize: 14, marginBottom: 10 }}>
+                            These settings control which Tobii gesture triggers each action. Dwell
+                            mode mostly ignores mappings. Hybrid uses only “Toggle Vowel Popup”.
+                        </div>
+
+                        <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
+                            <div>
+                                <div className="label">Select</div>
+                                <select
+                                    disabled={interactionMode === "hybrid_c"}
+                                    value={(interactionMapping.select ?? "FLICK_DOWN") as any}
+                                    onChange={(e) =>
+                                        updateMapping("select", e.target.value as GazeEventType)
+                                    }
+                                >
+                                    {ALL_GAZE_EVENTS.map((ev) => (
+                                        <option key={ev} value={ev}>
+                                            {ev}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <div className="label">Space</div>
+                                <select
+                                    disabled={interactionMode === "hybrid_c"}
+                                    value={(interactionMapping.space ?? "BLINK") as any}
+                                    onChange={(e) =>
+                                        updateMapping("space", e.target.value as GazeEventType)
+                                    }
+                                >
+                                    {ALL_GAZE_EVENTS.map((ev) => (
+                                        <option key={ev} value={ev}>
+                                            {ev}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <div className="label">Delete</div>
+                                <select
+                                    disabled={interactionMode === "hybrid_c"}
+                                    value={(interactionMapping.delete ?? "DOUBLE_BLINK") as any}
+                                    onChange={(e) =>
+                                        updateMapping("delete", e.target.value as GazeEventType)
+                                    }
+                                >
+                                    {ALL_GAZE_EVENTS.map((ev) => (
+                                        <option key={ev} value={ev}>
+                                            {ev}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <div className="label">Toggle Vowel Popup</div>
+                                <select
+                                    value={(interactionMapping.toggle_vowel_popup ?? "FLICK_DOWN") as any}
+                                    onChange={(e) =>
+                                        updateMapping(
+                                            "toggle_vowel_popup",
+                                            e.target.value as GazeEventType
+                                        )
+                                    }
+                                >
+                                    {ALL_GAZE_EVENTS.map((ev) => (
+                                        <option key={ev} value={ev}>
+                                            {ev}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
 
                     <div className="row" style={{ marginTop: 8 }}>
                         <div>
@@ -402,6 +607,9 @@ export default function EvalWrapper() {
                         <div>
                             <b>Layout:</b> {currentLayout}
                         </div>
+                        <div>
+                            <b>Interaction:</b> {interactionLabel}
+                        </div>
                         {phase !== "sus" && (
                             <div>
                                 <b>Prompt:</b> {promptIndex + 1} / {totalPromptsThisPhase}
@@ -417,12 +625,36 @@ export default function EvalWrapper() {
                     <div className="label">
                         Familiarization (adjust dwell as needed) for {currentLayout}
                     </div>
+
+                    {/* Reminder instructions for the chosen interaction mode */}
+                    <div
+                        style={{
+                            marginTop: 8,
+                            background: "#f1f5f9",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: 10,
+                            padding: "10px 12px",
+                            maxWidth: 780,
+                        }}
+                    >
+                        <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                            Interaction reminders
+                        </div>
+                        <ul style={{ margin: 0, paddingLeft: 18 }}>
+                            {interactionInstructions.map((line, idx) => (
+                                <li key={idx} style={{ marginBottom: 4, color: "#334155" }}>
+                                    {line}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+
                     {currentLayout?.includes("eyespeak") ? (
                         <DwellSliders
                             main={dwellMain}
                             popup={dwellPopup ?? 450}
                             setMain={setDwellMain}
-                            setPopup={(v)=>setDwellPopup(v)}
+                            setPopup={(v) => setDwellPopup(v)}
                         />
                     ) : (
                         <DwellSliderSingle
@@ -434,6 +666,14 @@ export default function EvalWrapper() {
                             label="Main Dwell (ms)"
                         />
                     )}
+
+                    {isDwellFree && (
+                        <div style={{ marginTop: 8, color: "#0f766e", fontSize: 14 }}>
+                            Note: Dwell-free mode does not use dwell times (sliders won’t affect
+                            typing).
+                        </div>
+                    )}
+
                     <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
                         <GazeDwellButton
                             onActivate={toReady}
@@ -451,7 +691,6 @@ export default function EvalWrapper() {
                             Ready
                         </GazeDwellButton>
                     </div>
-
                 </div>
             )}
 
@@ -465,8 +704,8 @@ export default function EvalWrapper() {
                         {/* FIRST PROMPT NOTICE */}
                         {promptIndex === 0 && (
                             <p style={{ fontSize: 16, color: "#1d4ed8" }}>
-                                Note: This first prompt is only for familiarization.
-                                Your answer will not be saved.
+                                Note: This first prompt is only for familiarization. Your answer
+                                will not be saved.
                             </p>
                         )}
 
@@ -477,6 +716,27 @@ export default function EvalWrapper() {
                                 paddingTop: 10,
                             }}
                         >
+                            <div
+                                style={{
+                                    background: "#f1f5f9",
+                                    border: "1px solid #e2e8f0",
+                                    borderRadius: 10,
+                                    padding: "10px 12px",
+                                    marginBottom: 10,
+                                }}
+                            >
+                                <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                                    How to interact
+                                </div>
+                                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                                    {interactionInstructions.map((line, idx) => (
+                                        <li key={idx} style={{ marginBottom: 4, color: "#334155" }}>
+                                            {line}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+
                             <div style={{ fontSize: 16, marginBottom: 6 }}>
                                 Optional: Adjust dwell time before starting this prompt
                             </div>
@@ -498,15 +758,10 @@ export default function EvalWrapper() {
                                     label="Main Dwell (ms)"
                                 />
                             )}
-
                         </div>
 
                         <div style={{ marginTop: 18 }}>
-                            <ReadyScreen
-                                prompt={currentPrompt}
-                                seconds={10}
-                                onStart={startTyping}
-                            />
+                            <ReadyScreen prompt={currentPrompt} seconds={10} onStart={startTyping} />
                         </div>
                     </div>
                 </div>
@@ -533,9 +788,7 @@ export default function EvalWrapper() {
                         }}
                     >
                         <h3 style={{ marginBottom: 4 }}>Please copy this text exactly:</h3>
-                        <p style={{ fontSize: 22, lineHeight: 1.4, margin: 0 }}>
-                            {currentPrompt}
-                        </p>
+                        <p style={{ fontSize: 22, lineHeight: 1.4, margin: 0 }}>{currentPrompt}</p>
                     </div>
 
                     <KeyboardLoader
@@ -543,7 +796,9 @@ export default function EvalWrapper() {
                         dwellMainMs={dwellMain}
                         evaluationMode={true}
                         keyboardSizePreset={keyboardSizePreset}
-                        dwellPopupMs={currentLayout === "wijesekara" ? 0 : (dwellPopup ?? 450)}
+                        dwellPopupMs={currentLayout === "wijesekara" ? 0 : dwellPopup ?? 450}
+                        interactionMode={interactionMode as any}
+                        interactionMapping={interactionMapping as any}
                         onChange={(text, metrics) => {
                             setCurrentText(text);
                             setLive(metrics);
@@ -554,9 +809,7 @@ export default function EvalWrapper() {
                         <button
                             onClick={finishRound}
                             disabled={submittingRef.current}
-                            title={
-                                submittingRef.current ? "Saving…" : "Submit this answer"
-                            }
+                            title={submittingRef.current ? "Saving…" : "Submit this answer"}
                             style={{
                                 backgroundColor: submittingRef.current ? "#fca5a5cc" : "#fca5a5",
                                 color: "#fff",
@@ -573,13 +826,11 @@ export default function EvalWrapper() {
                             }}
                             onMouseEnter={(e) => {
                                 if (!submittingRef.current)
-                                    (e.target as HTMLButtonElement).style.backgroundColor =
-                                        "#f87171";
+                                    (e.target as HTMLButtonElement).style.backgroundColor = "#f87171";
                             }}
                             onMouseLeave={(e) => {
                                 if (!submittingRef.current)
-                                    (e.target as HTMLButtonElement).style.backgroundColor =
-                                        "#fca5a5";
+                                    (e.target as HTMLButtonElement).style.backgroundColor = "#fca5a5";
                             }}
                         >
                             {submittingRef.current ? "Saving…" : "Submit"}
