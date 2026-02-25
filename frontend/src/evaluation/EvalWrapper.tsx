@@ -25,6 +25,7 @@ import type {
     InteractionId,
     InteractionMapping,
 } from "../interaction/types";
+import {DEFAULT_DWELL, DEFAULT_DWELL_FREE_C, DEFAULT_HYBRID_C} from "../interaction/defaults";
 
 // Keep this local to avoid coupling EvalWrapper to KeyboardLoader's internal types.
 // Must match your InteractionId union ("dwell" | "dwell_free_c" | "hybrid_c").
@@ -60,7 +61,7 @@ export default function EvalWrapper() {
     const [interactionMapping, setInteractionMapping] =
         useState<InteractionMapping>({
             // Dwell: mapping is mostly ignored (dwell triggers selection)
-            // Hybrid: only toggle_vowel_popup is used
+            // Hybrid: toggle_vowel_popup is used
             // Dwell-free: look at target then gesture triggers the action
             delete: "DOUBLE_BLINK",
             space: "BLINK",
@@ -85,29 +86,13 @@ export default function EvalWrapper() {
         "dwell_free_c",
     ]);
 
-    // Per-interaction mappings (admin configurable).
-    const [interactionMappingsByMode, setInteractionMappingsByMode] = useState<
-        Record<InteractionId, InteractionMapping>
-    >({
-        dwell: {},
-        hybrid_c: {
-            open_vowel_popup: "FLICK_DOWN",
-            close_vowel_popup: "CHORD:FLICK_DOWN+FLICK_DOWN",
-            toggle_vowel_popup: "FLICK_DOWN",
-            delete: "DOUBLE_BLINK",
-            space: "BLINK",
-        },
-        dwell_free_c: {
-            // Two-phase dwell-free: lock + corner confirm (can be overridden in StudyConfigPanel)
-            select: "CORNER_CONFIRM",
-            delete: "CHORD:FLICK_LEFT+FLICK_DOWN",
-            space: "BLINK",
-
-            open_vowel_popup: "FLICK_DOWN",
-            close_vowel_popup: "CHORD:FLICK_RIGHT+FLICK_DOWN",
-        },
-
-    });
+    const [interactionMappingsByMode, setInteractionMappingsByMode] = useState(
+        () => ({
+            dwell: DEFAULT_DWELL.mapping,
+            hybrid_c: DEFAULT_HYBRID_C.mapping,
+            dwell_free_c: DEFAULT_DWELL_FREE_C.mapping,
+        })
+    );
 
     // Computed condition order for the running session (layout × interaction)
     const [conditionInteractions, setConditionInteractions] = useState<InteractionId[]>([]);
@@ -431,9 +416,10 @@ export default function EvalWrapper() {
         }
 
         return [
-            "Dwell-free mode: look at the target, then perform a gesture (no dwell).",
+            "Dwell-free mode: look at the target to lock key.",
             `Select key / suggestion / control: ${select}.`,
             `Vowel popup toggle: look at the consonant then do ${toggle}.`,
+            "Select keys in popup using blink",
             `Space: ${space}.`,
             `Delete: ${del}.`,
         ];

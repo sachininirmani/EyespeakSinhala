@@ -10,6 +10,7 @@ interface VowelPopupProps {
     onControlClick?: (label: "More" | "Back" | "Close") => void;
     keyboardWidth: number;
     scaleBoost?: number;
+    lockedGestureId?: string | null;
 }
 
 const VowelPopup: React.FC<VowelPopupProps> = ({
@@ -19,7 +20,8 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                                                    position,
                                                    onControlClick,
                                                    keyboardWidth,
-                                                   scaleBoost = 1.0
+                                                   scaleBoost = 1.0,
+                                                   lockedGestureId = null
                                                }) => {
     const DIACRITICS_PER_STAGE = 6;
 
@@ -112,6 +114,15 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
 
     const currentColor = cooldown ? cooldownColor : activeColor;
 
+    const lockedRingStyle: React.CSSProperties = {
+        boxShadow: "0 0 0 4px rgba(59,130,246,0.75), 0 10px 24px rgba(0,0,0,0.18)",
+        borderColor: "#2563eb",
+        transform: "scale(1.06)",
+    };
+
+    const isLocked = (id: string) => lockedGestureId === id;
+
+
     return (
         <div
             style={{
@@ -135,6 +146,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                 return (
                     <button
                         key={option}
+                        data-gesture-id={`vowel:${option}`}
                         onClick={() => handleClick(option)}
                         style={{
                             position: "absolute",
@@ -147,6 +159,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             border: "2px solid #888",
                             fontSize: 26,
                             fontWeight: 600,
+                            ...(isLocked(`vowel:${option}`) ? lockedRingStyle : null),
                         }}
                     >
                         {option}
@@ -171,6 +184,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                 {/* LEFT HALF — NEW CLOSE BUTTON ON PAGE 0 */}
                 {showClose && (
                     <div
+                        data-gesture-id="vowel:Close"
                         onClick={() => handleClick("Close")}
                         style={{
                             width: halfButtonSize,
@@ -186,6 +200,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             fontSize: 28,
                             fontWeight: 700,
                             cursor: "pointer",
+                            ...(isLocked("vowel:Close") ? lockedRingStyle : null),
                         }}
                     >
                         ×
@@ -195,6 +210,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                 {/* LEFT HALF — BACK (only when page > 0) */}
                 {showBack && (
                     <div
+                        data-gesture-id="vowel:Back"
                         onClick={() => handleClick("Back")}
                         style={{
                             width: halfButtonSize,
@@ -211,6 +227,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             fontWeight: 600,
                             cursor: cooldown ? "not-allowed" : "pointer",
                             transition: "background 0.35s ease",
+                            ...(isLocked("vowel:Back") ? lockedRingStyle : null),
                         }}
                     >
                         Back
@@ -220,6 +237,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                 {/* RIGHT HALF — MORE (unchanged) */}
                 {showMore && (
                     <div
+                        data-gesture-id="vowel:More"
                         onClick={() => handleClick("More")}
                         style={{
                             width: halfButtonSize,
@@ -236,6 +254,7 @@ const VowelPopup: React.FC<VowelPopupProps> = ({
                             fontWeight: 600,
                             cursor: cooldown ? "not-allowed" : "pointer",
                             transition: "background 0.35s ease",
+                            ...(isLocked("vowel:More") ? lockedRingStyle : null),
                         }}
                     >
                         More

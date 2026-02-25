@@ -28,9 +28,9 @@ const ALL_BINDINGS: GestureBinding[] = [
     "CHORD:FLICK_LEFT+FLICK_DOWN",
     "CHORD:FLICK_RIGHT+FLICK_DOWN",
     "CHORD:FLICK_DOWN+FLICK_DOWN",
+    "CHORD:FLICK_DOWN+BLINK_INTENT",
 
     // Single-event options (available but can be accident-prone for delete/space)
-    "BLINK",
     "BLINK_INTENT",
     "DOUBLE_BLINK",
     "WINK_LEFT",
@@ -148,7 +148,7 @@ export default function StudyConfigPanel({
 
                             return (
                                 <>
-                                    {(["open_vowel_popup", "close_vowel_popup", "toggle_vowel_popup", "delete", "space"] as (keyof InteractionMapping)[]).map(
+                                    {(["delete", "space", "open_vowel_popup", "close_vowel_popup"] as (keyof InteractionMapping)[]).map(
                                         (k) => (
                                             <div
                                                 key={String(k)}
@@ -188,7 +188,7 @@ export default function StudyConfigPanel({
 
                             return (
                                 <>
-                                    {(["select", "delete", "space", "open_vowel_popup", "close_vowel_popup", "toggle_vowel_popup"] as (keyof InteractionMapping)[]).map(
+                                    {(["select", "delete", "space", "open_vowel_popup", "close_vowel_popup"] as (keyof InteractionMapping)[]).map(
                                         (k) => (
                                             <div
                                                 key={String(k)}

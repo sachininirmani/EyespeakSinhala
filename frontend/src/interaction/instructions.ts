@@ -12,6 +12,12 @@ export function buildInteractionReminder(config: InteractionConfig): string {
     if (config.mapping.space)
         lines.push(`Space: ${config.mapping.space}`);
 
+    if (config.mapping.open_vowel_popup)
+        lines.push(`Popup open: ${config.mapping.open_vowel_popup}`);
+
+    if (config.mapping.close_vowel_popup)
+        lines.push(`Popup close: ${config.mapping.close_vowel_popup}`);
+
     if (config.mapping.toggle_vowel_popup)
         lines.push(`Popup toggle: ${config.mapping.toggle_vowel_popup}`);
 

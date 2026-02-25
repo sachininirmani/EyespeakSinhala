@@ -34,17 +34,19 @@ export function useKeyCornerConfirm(opts: Options) {
         eligibleRootRef,
         onConfirm,
         lockMs = 150,
-        confirmHoldMs = 140,
-        unlockGraceMs = 140,
-        cornerFrac = 0.22,
-        cornerMinPx = 18,
-        cornerMaxPx = 34,
+        confirmHoldMs = 160,
+        unlockGraceMs = 160,
+        cornerFrac = 0.35,
+        cornerMinPx = 40,
+        cornerMaxPx = 48,
     } = opts;
 
     const [overlay, setOverlay] = useState<{ left: number; top: number; size: number; visible: boolean } | null>(null);
 
     const candidateRef = useRef<HTMLElement | null>(null);
     const candidateSinceRef = useRef<number>(0);
+
+    const lastConfirmedRef = useRef<HTMLElement | null>(null);
 
     const lockedRef = useRef<HTMLElement | null>(null);
     const confirmEnterAtRef = useRef<number>(0);
@@ -102,6 +104,17 @@ export function useKeyCornerConfirm(opts: Options) {
         const now = performance.now();
         const el = document.elementFromPoint(gaze.x, gaze.y);
         const btn = isEligibleButton(el) ? (el as HTMLElement) : null;
+
+        // Prevent re-trigger while still gazing the same element after a confirm.
+        // User must move gaze away (to a different eligible target or none) before confirming again.
+        if (lastConfirmedRef.current) {
+            if (btn !== lastConfirmedRef.current) {
+                lastConfirmedRef.current = null;
+            } else {
+                return;
+            }
+        }
+
 
         const locked = lockedRef.current;
 

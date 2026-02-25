@@ -6,16 +6,13 @@ import { useDwell } from "../gaze/useDwell";
 import { useGazeEvents } from "../gaze/useGazeEvents";
 import GazeIndicator from "../gaze/GazeIndicator";
 import BiasTuner from "../gaze/BiasTuner";
+import { useKeyCornerConfirm } from "../interaction/useKeyCornerConfirm";
 import type {
     GazeEventType,
     InteractionConfig,
     InteractionId,
     InteractionMapping,
 } from "../interaction/types";
-
-import { useGestureRouter } from "../interaction/useGestureRouter";
-import { isCornerConfirm } from "../interaction/gestureBindings";
-import { useKeyCornerConfirm } from "../interaction/useKeyCornerConfirm";
 
 /** Number & punctuation overlays (unchanged) */
 const numbers = [
@@ -235,20 +232,34 @@ export default function KeyboardBase({
     const isHybrid = interactionId === "hybrid_c";
     const isDwellFree = interactionId === "dwell_free_c";
 
-    // Defaults (if UI did not set mapping yet)
-    // - HYBRID: toggle popup default FLICK_DOWN
-    // - DWELL_FREE: select default FLICK_DOWN (fixate then flick down),
-    //               space default BLINK,
-    //               delete default DOUBLE_BLINK
-    const resolvedMapping = useMemo(() => {
+    const resolvedMapping = useMemo<InteractionMapping>(() => {
         const m = interactionMappingResolved ?? {};
+
         return {
-            select: (m.select ?? "FLICK_DOWN") as GazeEventType,
-            space: (m.space ?? "BLINK") as GazeEventType,
-            delete: (m.delete ?? "DOUBLE_BLINK") as GazeEventType,
-            toggle_vowel_popup: (m.toggle_vowel_popup ?? "FLICK_DOWN") as GazeEventType,
+            // Dwell-free default: CORNER_CONFIRM (two-phase)
+            select: isDwellFree
+                ? (m.select ?? "CORNER_CONFIRM")
+                : m.select,
+
+            // Action bindings
+            space: m.space ?? "BLINK_INTENT",
+            delete: m.delete ?? "CHORD:FLICK_RIGHT+FLICK_DOWN",
+
+            // Popup control
+            open_vowel_popup:
+                m.open_vowel_popup ??
+                (isHybrid || isDwellFree ? "FLICK_DOWN" : undefined),
+
+            close_vowel_popup:
+                m.close_vowel_popup ??
+                (isHybrid || isDwellFree
+                    ? "CHORD:FLICK_DOWN+BLINK_INTENT"
+                    : undefined),
+
+            // Backward compatibility (only if explicitly used)
+            toggle_vowel_popup: m.toggle_vowel_popup,
         };
-    }, [interactionMappingResolved]);
+    }, [interactionMappingResolved, isDwellFree, isHybrid]);
 
     // ---------- STATE ----------
     const [typedText, setTypedText] = useState("");
@@ -308,6 +319,97 @@ export default function KeyboardBase({
     // For visual feedback, we keep a lightweight "armed element" reference.
     const armedElRef = useRef<HTMLElement | null>(null);
 
+    // --- Dwell-free popup lock (blink-confirm) ---
+    const [popupLockedGestureId, setPopupLockedGestureId] = useState<string | null>(null);
+    const popupLockedElRef = useRef<HTMLElement | null>(null);
+    const popupCandidateIdRef = useRef<string | null>(null);
+    const popupCandidateSinceRef = useRef<number>(0);
+    const popupLastConfirmedIdRef = useRef<string | null>(null);
+    const popupLastInsideLockedAtRef = useRef<number>(0);
+
+    const clickAtGaze = () => {
+        const el = (armedElRef.current ??
+            (document.elementFromPoint(gaze.x, gaze.y) as HTMLElement | null)) as HTMLElement | null;
+        el?.click();
+    };
+
+    // Dwell-free 2-phase select: lock key then confirm via corner triangle.
+    const cornerConfirm = useKeyCornerConfirm({
+        enabled: isDwellFree && resolvedMapping.select === "CORNER_CONFIRM",
+        gaze,
+        containerRef,
+        eligibleRootRef: resizeContainerRef,
+        onConfirm: (el) => {
+            try {
+                (el as any).click?.();
+            } catch {
+                clickAtGaze();
+            }
+        },
+    });
+
+    // Dwell-free popup lock (blink-confirm) tracking.
+    useEffect(() => {
+        if (!isDwellFree) return;
+        if (!vowelPopup) {
+            setPopupLockedGestureId(null);
+            popupLockedElRef.current = null;
+            popupCandidateIdRef.current = null;
+            popupCandidateSinceRef.current = 0;
+            popupLastConfirmedIdRef.current = null;
+            popupLastInsideLockedAtRef.current = 0;
+            return;
+        }
+
+        const now = performance.now();
+        const el = document.elementFromPoint(gaze.x, gaze.y) as HTMLElement | null;
+        const target = el?.closest?.("[data-gesture-id^='vowel:']") as HTMLElement | null;
+        const id = target?.getAttribute?.("data-gesture-id") || null;
+
+        // Reset "repeat guard" once gaze leaves the last confirmed target
+        if (popupLastConfirmedIdRef.current && id !== popupLastConfirmedIdRef.current) {
+            popupLastConfirmedIdRef.current = null;
+        }
+
+        const lockedId = popupLockedGestureId;
+        const lockedEl = popupLockedElRef.current;
+
+        if (lockedId && lockedEl) {
+            // Maintain lock while gaze stays on locked target
+            const stillOnLocked = id === lockedId;
+
+            if (stillOnLocked) {
+                popupLastInsideLockedAtRef.current = now;
+            }
+
+            // Unlock if gaze left the locked target for a short time
+            if (
+                !stillOnLocked &&
+                popupLastInsideLockedAtRef.current > 0 &&
+                now - popupLastInsideLockedAtRef.current > 180
+            ) {
+                setPopupLockedGestureId(null);
+                popupLockedElRef.current = null;
+                popupCandidateIdRef.current = id;
+                popupCandidateSinceRef.current = id ? now : 0;
+                popupLastInsideLockedAtRef.current = 0;
+            }
+            return;
+        }
+
+        // No lock: fixation detection to lock popup target
+        if (id && popupCandidateIdRef.current === id) {
+            if (popupCandidateSinceRef.current === 0) popupCandidateSinceRef.current = now;
+            if (now - popupCandidateSinceRef.current >= 150) {
+                setPopupLockedGestureId(id);
+                popupLockedElRef.current = target;
+                popupLastInsideLockedAtRef.current = now;
+            }
+        } else {
+            popupCandidateIdRef.current = id;
+            popupCandidateSinceRef.current = id ? now : 0;
+        }
+    }, [gaze.x, gaze.y, isDwellFree, vowelPopup, popupLockedGestureId]);
     // shared, resizable keyboard size
     const [kbSize, setKbSize] = useState<KeyboardSize>(globalKeyboardSize);
 
@@ -425,6 +527,12 @@ export default function KeyboardBase({
                 setVowelPopup(null);
                 setPendingVowelPopup(null);
                 if (isFirstCharVowelRowKey) setV234VowelRowMode("hidden");
+                setPopupLockedGestureId(null);
+                popupLockedElRef.current = null;
+                popupCandidateIdRef.current = null;
+                popupCandidateSinceRef.current = 0;
+                popupLastConfirmedIdRef.current = null;
+                popupLastInsideLockedAtRef.current = 0;
                 return;
             }
 
@@ -622,6 +730,12 @@ export default function KeyboardBase({
         setVowelPopup(null);
         setPendingVowelPopup(null);
         setV234VowelRowMode("hidden");
+        setPopupLockedGestureId(null);
+        popupLockedElRef.current = null;
+        popupCandidateIdRef.current = null;
+        popupCandidateSinceRef.current = 0;
+        popupLastConfirmedIdRef.current = null;
+        popupLastInsideLockedAtRef.current = 0;
         emit(newText);
 
         const lastWord = newText.trim().split(" ").pop() || "";
@@ -671,6 +785,12 @@ export default function KeyboardBase({
         }
 
         if (implicitResolveFirstVowel) setV234VowelRowMode("hidden");
+        setPopupLockedGestureId(null);
+        popupLockedElRef.current = null;
+        popupCandidateIdRef.current = null;
+        popupCandidateSinceRef.current = 0;
+        popupLastConfirmedIdRef.current = null;
+        popupLastInsideLockedAtRef.current = 0;
     };
 
     // ---------------- Eyespeak v2/v3/v4: vowel-row hide after first char ----------------
@@ -735,33 +855,31 @@ export default function KeyboardBase({
     // ---------------- Gesture router (HYBRID + DWELL_FREE) ----------------
     const gestureCooldownUntilRef = useRef<number>(0);
 
-    const clickAtGaze = () => {
-        const el = (armedElRef.current ?? (document.elementFromPoint(gaze.x, gaze.y) as HTMLElement | null)) as
-            | HTMLElement
-            | null;
-        el?.click();
-    };
-
     const closeVowelPopup = () => {
         if (!layout.hasVowelPopup) return;
         if (!vowelPopup) return;
         setVowelPopup(null);
+        setPendingVowelPopup(null);
         setV234VowelRowMode("hidden");
+        setPopupLockedGestureId(null);
+        popupLockedElRef.current = null;
+        popupCandidateIdRef.current = null;
+        popupCandidateSinceRef.current = 0;
+        popupLastConfirmedIdRef.current = null;
+        popupLastInsideLockedAtRef.current = 0;
     };
 
     const openVowelPopup = () => {
         if (!layout.hasVowelPopup) return;
 
-        // Open-only to prevent accidental "open then immediately close" due to event jitter
+        // Open-only: prevents "open then immediately close" due to double firing/jitter.
         if (vowelPopup) return;
 
-        // If armed => open
         if (pendingVowelPopup) {
             setVowelPopup(pendingVowelPopup);
             return;
         }
 
-        // As a fallback, if we have anchor data, rebuild it and open
         if (lastVowelAnchor) {
             fetchVowelPredictions(
                 lastVowelAnchor.prefix,
@@ -775,63 +893,82 @@ export default function KeyboardBase({
     };
 
     const toggleVowelPopup = () => {
-        if (!layout.hasVowelPopup) return;
         if (vowelPopup) closeVowelPopup();
         else openVowelPopup();
-    };;
+    };
 
-    const gestureRouter = useGestureRouter(
-        resolvedMapping,
-        {
-            onSelect: () => {
-                // If selection is CORNER_CONFIRM, it is handled by useKeyCornerConfirm.
-                if (isCornerConfirm(resolvedMapping.select as any)) return;
-                if (isDwellFree) {
-                    clickAtGaze();
-                }
-            },
-            onDelete: () => {
-                if (isHybrid || isDwellFree) handleDeleteAction();
-            },
-            onSpace: () => {
-                if (isHybrid || isDwellFree) handleSpaceAction();
-            },
-            onPopupOpen: () => {
-                if (isHybrid || isDwellFree) openVowelPopup();
-            },
-            onPopupClose: () => {
-                if (isHybrid || isDwellFree) closeVowelPopup();
-            },
-            onPopupToggle: () => {
-                if (isHybrid || isDwellFree) toggleVowelPopup();
-            },
-        },
-        { cooldownMs: 220, cooldownUntilRef: gestureCooldownUntilRef }
-    );
 
     useGazeEvents((ev: GazeEventType) => {
         if (showBias) return;
 
-        // DWELL: ignore gestures entirely (dwell-based stays unchanged)
-        if (isDwell) return;
+        const now = performance.now();
+        if (now < gestureCooldownUntilRef.current) return;
+        gestureCooldownUntilRef.current = now + 220;
 
-        // HYBRID + DWELL_FREE: route mapped gestures
-        gestureRouter.onEvent(ev);
-    });
-
-    // Dwell-free only: two-phase lock + corner confirm (no dwell selection).
-    const cornerConfirm = useKeyCornerConfirm({
-        enabled: isDwellFree && isCornerConfirm(resolvedMapping.select as any),
-        gaze,
-        containerRef,
-        eligibleRootRef: resizeContainerRef as any,
-        onConfirm: (el) => {
-            try {
-                (el as any).click?.();
-            } catch {
-                clickAtGaze();
+        // HYBRID: popup control by mapping (open/close preferred; toggle kept for backward compatibility)
+        if (isHybrid) {
+            if (resolvedMapping.open_vowel_popup && ev === resolvedMapping.open_vowel_popup) {
+                openVowelPopup();
+                return;
             }
-        },
+            if (resolvedMapping.close_vowel_popup && ev === resolvedMapping.close_vowel_popup) {
+                closeVowelPopup();
+                return;
+            }
+            if (resolvedMapping.toggle_vowel_popup && ev === resolvedMapping.toggle_vowel_popup) {
+                toggleVowelPopup();
+                return;
+            }
+            return;
+        }
+
+        // DWELL_FREE: select/delete/space by mapping
+        if (isDwellFree) {
+
+            // Popup blink-confirm (dwell-free): lock a popup option by short fixation, confirm via BLINK_INTENT.
+            if (
+                vowelPopup &&
+                popupLockedGestureId &&
+                (ev === "BLINK_INTENT" || ev === "BLINK")
+            ) {
+                // one activation per gaze entry on the same popup target
+                if (popupLastConfirmedIdRef.current !== popupLockedGestureId) {
+                    const el = popupLockedElRef.current;
+                    popupLastConfirmedIdRef.current = popupLockedGestureId;
+                    try {
+                        (el as any)?.click?.();
+                    } catch {
+                        // ignore
+                    }
+                }
+                return;
+            }
+
+            // Handle select only if it is NOT CORNER_CONFIRM
+            // (CORNER_CONFIRM is gaze-based via useKeyCornerConfirm, not event-based)
+            if (
+                resolvedMapping.select &&
+                resolvedMapping.select !== "CORNER_CONFIRM" &&
+                ev === resolvedMapping.select
+            ) {
+                clickAtGaze();
+                return;
+            }
+
+            if (resolvedMapping.delete && ev === resolvedMapping.delete) {
+                handleDeleteAction();
+                return;
+            }
+
+            if (resolvedMapping.space && ev === resolvedMapping.space) {
+                handleSpaceAction();
+                return;
+            }
+
+            return;
+        }
+
+        // DWELL: ignore gestures entirely
     });
 
 
@@ -1262,10 +1399,17 @@ export default function KeyboardBase({
                         setVowelPopup(null);
                         setPendingVowelPopup(null);
                         setV234VowelRowMode("hidden");
+                        setPopupLockedGestureId(null);
+                        popupLockedElRef.current = null;
+                        popupCandidateIdRef.current = null;
+                        popupCandidateSinceRef.current = 0;
+                        popupLastConfirmedIdRef.current = null;
+                        popupLastInsideLockedAtRef.current = 0;
                     }}
                     position={vowelPopup.position}
                     keyboardWidth={kbSize.width}
                     scaleBoost={vowelPopup.scaleBoost}
+                    lockedGestureId={popupLockedGestureId}
                     onControlClick={(label) => {
                         if (label === "More") {
                             setVowelMoreClicks((m) => m + 1);
@@ -1283,8 +1427,7 @@ export default function KeyboardBase({
                 />
             )}
 
-            {showBias && <BiasTuner onClose={() => setShowBias(false)} />}
-
+            {/* Dwell-free corner confirm overlay */}
             {cornerConfirm?.showCorner && cornerConfirm.overlayStyle && (
                 <div style={cornerConfirm.overlayStyle as any}>
                     <div
@@ -1297,6 +1440,8 @@ export default function KeyboardBase({
                     />
                 </div>
             )}
+
+            {showBias && <BiasTuner onClose={() => setShowBias(false)} />}
 
             <GazeIndicator
                 x={gaze.x}
