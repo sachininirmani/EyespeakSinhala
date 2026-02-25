@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { ALL_KEYBOARDS, LayoutId } from "../keyboard";
-import type { GazeEventType, GestureBinding, InteractionId, InteractionMapping } from "../interaction/types";
+import type { InteractionId } from "../interaction/types";
 
 type Props = {
     promptCount: 2 | 3 | 4;
@@ -11,38 +11,7 @@ type Props = {
 
     selectedInteractions: InteractionId[];
     setSelectedInteractions: (v: InteractionId[] | ((prev: InteractionId[]) => InteractionId[])) => void;
-
-    interactionMappingsByMode: Record<InteractionId, InteractionMapping>;
-    setInteractionMappingsByMode: (
-        v:
-            | Record<InteractionId, InteractionMapping>
-            | ((prev: Record<InteractionId, InteractionMapping>) => Record<InteractionId, InteractionMapping>)
-    ) => void;
 };
-
-const ALL_BINDINGS: GestureBinding[] = [
-    // Gaze-only confirm (dwell-free)
-    "CORNER_CONFIRM",
-
-    // Safer chord options (rare accidental triggers)
-    "CHORD:FLICK_LEFT+FLICK_DOWN",
-    "CHORD:FLICK_RIGHT+FLICK_DOWN",
-    "CHORD:FLICK_DOWN+FLICK_DOWN",
-    "CHORD:FLICK_DOWN+BLINK_INTENT",
-
-    // Single-event options (available but can be accident-prone for delete/space)
-    "BLINK_INTENT",
-    "DOUBLE_BLINK",
-    "WINK_LEFT",
-    "WINK_RIGHT",
-    "FLICK_DOWN",
-    "FLICK_LEFT",
-    "FLICK_RIGHT",
-] as any;
-
-function isOptionUsedElsewhere(mapping: InteractionMapping, key: keyof InteractionMapping, option: GestureBinding) {
-    return Object.entries(mapping).some(([k, v]) => k !== key && v === option);
-}
 
 export default function StudyConfigPanel({
                                              promptCount,
@@ -51,8 +20,6 @@ export default function StudyConfigPanel({
                                              setSelectedLayouts,
                                              selectedInteractions,
                                              setSelectedInteractions,
-                                             interactionMappingsByMode,
-                                             setInteractionMappingsByMode,
                                          }: Props) {
     const [open, setOpen] = useState(true);
 
@@ -76,20 +43,13 @@ export default function StudyConfigPanel({
         });
     };
 
-    const updateMapping = (mode: InteractionId, patch: Partial<InteractionMapping>) => {
-        setInteractionMappingsByMode((prev) => ({
-            ...prev,
-            [mode]: { ...(prev[mode] ?? {}), ...patch },
-        }));
-    };
-
     return (
         <div className="card" style={{ marginTop: 12, width: "100%" }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                     <div className="label">Study Configuration (admin)</div>
                     <div style={{ color: "#64748b", fontSize: 13, marginTop: 2 }}>
-                        Configure layouts, interactions, prompt count, and gesture mappings.
+                        Configure layouts, interactions, and prompt count.
                     </div>
                 </div>
                 <button className="btn" onClick={() => setOpen((x) => !x)}>
@@ -134,101 +94,10 @@ export default function StudyConfigPanel({
                                 {iid}
                             </label>
                         ))}
-                    </div>
-
-                    <div style={{ minWidth: 320, opacity: selectedInteractions.includes("hybrid_c") ? 1 : 0.5 }}>
-                        <div className="label">Action mapping (hybrid)</div>
-                        <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
-                            Hybrid selection stays dwell-based; gestures map to popup/delete/space.
+                        <div style={{ fontSize: 12, color: "#64748b", marginTop: 8, maxWidth: 360 }}>
+                            Note: Action mappings are fixed per interaction mode for this study (to keep participant
+                            training consistent).
                         </div>
-
-                        {(() => {
-                            const disabled = !selectedInteractions.includes("hybrid_c");
-                            const m = interactionMappingsByMode.hybrid_c ?? {};
-
-                            return (
-                                <>
-                                    {(["delete", "space", "open_vowel_popup", "close_vowel_popup"] as (keyof InteractionMapping)[]).map(
-                                        (k) => (
-                                            <div
-                                                key={String(k)}
-                                                style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}
-                                            >
-                                                <span style={{ width: 130, fontSize: 13 }}>{String(k)}</span>
-                                                <select
-                                                    disabled={disabled}
-                                                    value={(m[k] as any) ?? (k === "space" ? "BLINK" : "FLICK_DOWN")}
-                                                    onChange={(e) =>
-                                                        updateMapping("hybrid_c", { [k]: e.target.value as any })
-                                                    }
-                                                >
-                                                    {ALL_BINDINGS.map((g) => (
-                                                        <option
-                                                            key={g}
-                                                            value={g}
-                                                            disabled={disabled ? false : isOptionUsedElsewhere(m, k, g)}
-                                                        >
-                                                            {g}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        )
-                                    )}
-                                </>
-                            );
-                        })()}
-                    </div>
-
-                    <div style={{ minWidth: 320, opacity: selectedInteractions.includes("dwell_free_c") ? 1 : 0.5 }}>
-                        <div className="label">Action mapping (dwell-free)</div>
-                        {(() => {
-                            const disabled = !selectedInteractions.includes("dwell_free_c");
-                            const m = interactionMappingsByMode.dwell_free_c ?? {};
-
-                            return (
-                                <>
-                                    {(["select", "delete", "space", "open_vowel_popup", "close_vowel_popup"] as (keyof InteractionMapping)[]).map(
-                                        (k) => (
-                                            <div
-                                                key={String(k)}
-                                                style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}
-                                            >
-                                                <span style={{ width: 130, fontSize: 13 }}>{String(k)}</span>
-                                                <select
-                                                    disabled={disabled}
-                                                    value={
-                                                        (m[k] as any) ??
-                                                        (k === "select"
-                                                            ? "CORNER_CONFIRM"
-                                                            : k === "open_vowel_popup" || k === "toggle_vowel_popup"
-                                                                ? "FLICK_DOWN"
-                                                                : k === "close_vowel_popup"
-                                                                    ? "CHORD:FLICK_RIGHT+FLICK_DOWN"
-                                                                    : k === "space"
-                                                                        ? "BLINK"
-                                                                        : "DOUBLE_BLINK")
-                                                    }
-                                                    onChange={(e) =>
-                                                        updateMapping("dwell_free_c", { [k]: e.target.value as any })
-                                                    }
-                                                >
-                                                    {ALL_BINDINGS.map((g) => (
-                                                        <option
-                                                            key={g}
-                                                            value={g}
-                                                            disabled={disabled ? false : isOptionUsedElsewhere(m, k, g)}
-                                                        >
-                                                            {g}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        )
-                                    )}
-                                </>
-                            );
-                        })()}
                     </div>
                 </div>
             )}

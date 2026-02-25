@@ -1,12 +1,19 @@
 // src/interaction/useGestureRouter.ts
 //
 // Translates low-level TobiiBridge event labels into high-level actions.
-// Supports single-event bindings AND chord bindings.
-// Designed to keep KeyboardBase minimal and avoid adding more logic there.
+// Composite/chord gestures REMOVED.
+// Runtime logic is now FIXED (not user-mapped).
+//
+// Supported runtime rules:
+// - Dwell mode ignores gestures.
+// - FLICK_DOWN → open popup (if not open).
+// - BLINK_INTENT → space (only if popup not open).
+// - Other popup selection logic handled in KeyboardBase (flick left/right).
+//
+// Designed to keep KeyboardBase minimal and stable.
 
 import { useCallback, useEffect, useRef } from "react";
-import type { GestureBinding, GazeEventType, InteractionMapping } from "./types";
-import { parseBinding } from "./gestureBindings";
+import type { GazeEventType } from "./types";
 
 type Handlers = {
     onSelect?: () => void;
@@ -17,22 +24,32 @@ type Handlers = {
     onPopupToggle?: () => void;
 };
 
-type Options = {
-    cooldownMs?: number;
-    /** optional external cooldown ref to keep legacy keyboard fallback code working */
-    cooldownUntilRef?: React.MutableRefObject<number>;
+type Context = {
+    mode: "dwell" | "hybrid" | "dwell_free";
+    popupOpen: boolean;
 };
 
-export function useGestureRouter(mapping: InteractionMapping, handlers: Handlers, opts?: Options) {
+type Options = {
+    cooldownMs?: number;
+    cooldownUntilRef?: { current: number };
+    getContext?: () => Context;
+};
+
+export function useGestureRouter(
+    _mapping: any, // kept for compatibility with existing calls
+    handlers: Handlers,
+    opts?: Options
+) {
     const cooldownMs = opts?.cooldownMs ?? 220;
 
     const internalCooldownRef = useRef<number>(0);
     const cooldownUntilRef = opts?.cooldownUntilRef ?? internalCooldownRef;
 
-    // chord state: we only support 2-step chords as "CHORD:A+B"
-    const pendingFirstRef = useRef<{ ev: GazeEventType; at: number } | null>(null);
+    const getContextRef = useRef<(() => Context) | null>(opts?.getContext ?? null);
+    useEffect(() => {
+        getContextRef.current = opts?.getContext ?? null;
+    }, [opts?.getContext]);
 
-    // keep latest handlers without rebuilding the hook too often
     const handlersRef = useRef(handlers);
     useEffect(() => {
         handlersRef.current = handlers;
@@ -48,77 +65,37 @@ export function useGestureRouter(mapping: InteractionMapping, handlers: Handlers
         [cooldownMs, cooldownUntilRef]
     );
 
-    const matchBinding = useCallback((binding: GestureBinding | undefined, ev: GazeEventType): boolean => {
-        const parsed = parseBinding(binding as any);
-        if (!parsed) return false;
-
-        if (parsed.kind === "event") return parsed.event === ev;
-
-        if (parsed.kind === "chord") {
-            const now = performance.now();
-            const p = pendingFirstRef.current;
-
-            // start chord
-            if (!p) {
-                if (ev === parsed.first) pendingFirstRef.current = { ev, at: now };
-                return false;
-            }
-
-            // expired
-            if (now - p.at > parsed.withinMs) {
-                pendingFirstRef.current = null;
-                if (ev === parsed.first) pendingFirstRef.current = { ev, at: now };
-                return false;
-            }
-
-            // complete
-            if (p.ev === parsed.first && ev === parsed.second) {
-                pendingFirstRef.current = null;
-                return true;
-            }
-
-            // wrong second: reset, but allow restart
-            if (ev === parsed.first) pendingFirstRef.current = { ev, at: now };
-            else pendingFirstRef.current = null;
-
-            return false;
-        }
-
-        // CORNER_CONFIRM is gaze-based and is handled elsewhere
-        return false;
-    }, []);
-
     const onEvent = useCallback(
         (ev: GazeEventType) => {
-            // Popup open/close/toggle
-            if (matchBinding(mapping.open_vowel_popup, ev)) {
+            const ctx = getContextRef.current?.() ?? {
+                mode: "dwell",
+                popupOpen: false,
+            };
+
+            // 🔹 DWELL MODE: ignore all gesture events
+            if (ctx.mode === "dwell") return;
+
+            // 🔹 POPUP OPEN (explicit only)
+            if (!ctx.popupOpen && ev === "FLICK_DOWN") {
                 fire(handlersRef.current.onPopupOpen);
                 return;
             }
-            if (matchBinding(mapping.close_vowel_popup, ev)) {
-                fire(handlersRef.current.onPopupClose);
-                return;
-            }
-            if (matchBinding(mapping.toggle_vowel_popup, ev)) {
-                fire(handlersRef.current.onPopupToggle);
-                return;
-            }
 
-            // Actions
-            if (matchBinding(mapping.delete, ev)) {
-                fire(handlersRef.current.onDelete);
-                return;
-            }
-            if (matchBinding(mapping.space, ev)) {
+            // 🔹 SPACE (blink intent only when popup not open)
+            if (!ctx.popupOpen && ev === "BLINK_INTENT") {
                 fire(handlersRef.current.onSpace);
                 return;
             }
-            if (matchBinding(mapping.select, ev)) {
-                fire(handlersRef.current.onSelect);
+
+            // 🔹 Ignore blink while popup is open (reserved)
+            if (ctx.popupOpen && ev === "BLINK_INTENT") {
                 return;
             }
+
+            // 🔹 Delete is spatial (handled in KeyboardBase)
+            // 🔹 Popup selection flick left/right handled in KeyboardBase
         },
-        [fire, matchBinding, mapping]
+        [fire]
     );
 
     return { onEvent, cooldownUntilRef };

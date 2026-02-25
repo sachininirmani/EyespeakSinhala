@@ -11,7 +11,8 @@ import type { InteractionConfig, GestureBinding, GazeEventType } from "./types";
  *
  * NOTE:
  * InteractionMapping values must be TobiiBridge event labels (GazeEventType).
- * Dwell selection is NOT a TobiiBridge event, so dwell mapping should remain empty.
+ * Some actions (like CORNER_CONFIRM and spatial delete zone) are handled in KeyboardBase
+ * and therefore may not appear in this mapping.
  */
 
 export const DEFAULT_DWELL: InteractionConfig = {
@@ -24,19 +25,18 @@ export const DEFAULT_DWELL_FREE_C: InteractionConfig = {
     id: "dwell_free_c",
     label: "Dwell-Free (Model C)",
     mapping: {
-        // Two-phase dwell-free: lock key by short fixation, confirm via corner hotspot.
-        // Users can override this in StudyConfigPanel if they want a gesture-confirm.
+        // Dwell-free main-key selection is always:
+        //   look -> lock -> CORNER_CONFIRM
+        // (Handled by useKeyCornerConfirm, not by gaze events.)
         select: "CORNER_CONFIRM" as GestureBinding,
 
-        // Safer defaults avoid accidental deletes during natural horizontal scanning
-        delete: "CHORD:FLICK_RIGHT+FLICK_DOWN" as GestureBinding,
-
-        // If wrapper blink is improved, BLINK_INTENT is ideal; BLINK kept for backward compatibility
-        space: "BLINK_INTENT" as GestureBinding,
-
-        // Popup open/close split prevents "open then instantly close" due to double firing
+        // Popup open is explicit in dwell-free (same as hybrid).
+        // Popup selection confirm is handled in KeyboardBase as:
+        //   look -> lock popup option -> FLICK_LEFT / FLICK_RIGHT
         open_vowel_popup: "FLICK_DOWN" as GestureBinding,
-        close_vowel_popup: "CHORD:FLICK_DOWN+BLINK_INTENT" as GestureBinding,
+
+        // Space is intended blink.
+        space: "BLINK_INTENT" as GestureBinding,
     },
 };
 
@@ -44,14 +44,11 @@ export const DEFAULT_HYBRID_C: InteractionConfig = {
     id: "hybrid_c",
     label: "Hybrid (Model C)",
     mapping: {
-        // Hybrid uses dwell for selection; only popup control is gesture-driven.
-        // Prefer open-only + separate close to avoid accidental toggling.
+        // Hybrid typing is still dwell-based.
+        // Popup open is explicit.
         open_vowel_popup: "FLICK_DOWN" as GestureBinding,
-        close_vowel_popup: "CHORD:FLICK_DOWN+BLINK_INTENT" as GestureBinding,
 
-
-        // Optional
-        delete: "CHORD:FLICK_RIGHT+FLICK_DOWN" as GestureBinding,
+        // Space is intended blink.
         space: "BLINK_INTENT" as GestureBinding,
     },
 };
@@ -72,7 +69,7 @@ export function resolveInteractionById(id?: string): InteractionConfig {
 
 /**
  * Helper to normalize/validate a mapping coming from UI/backend.
- * Ensures only known GazeEventType strings remain.
+ * (We keep this for backwards compatibility with older sessions / DB rows.)
  */
 export function sanitizeInteractionMapping(
     mapping: Record<string, any> | null | undefined
@@ -83,6 +80,7 @@ export function sanitizeInteractionMapping(
         "FLICK_DOWN",
         "BLINK",
         "DOUBLE_BLINK",
+        "BLINK_INTENT",
         "WINK_LEFT",
         "WINK_RIGHT",
     ]);

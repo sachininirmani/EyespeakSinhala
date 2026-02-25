@@ -20,12 +20,9 @@ export type GazeEventType =
 /* 2. Gesture binding types                                           */
 /* ------------------------------------------------------------------ */
 
-export type ChordBinding = `CHORD:${GazeEventType}+${GazeEventType}`;
-
-export type GestureBinding =
-    | GazeEventType
-    | ChordBinding
-    | "CORNER_CONFIRM";
+// NOTE: Composite/chord gestures are intentionally removed from the study
+// (hard to execute reliably + higher accidental triggers).
+export type GestureBinding = GazeEventType | "CORNER_CONFIRM";
 
 /* ------------------------------------------------------------------ */
 /* 3. Interaction mapping                                             */

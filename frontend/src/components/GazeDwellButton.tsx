@@ -11,12 +11,14 @@ import { useGaze } from "../gaze/useGaze";
 export default function GazeDwellButton({
                                             onActivate,
                                             dwellMs = 800,
+                                            disabled = false,
                                             children,
                                             style,
                                             className,
                                         }: {
     onActivate: () => void;
     dwellMs?: number;
+    disabled?: boolean;
     children: React.ReactNode;
     style?: React.CSSProperties;
     className?: string;
@@ -31,10 +33,19 @@ export default function GazeDwellButton({
     const triggeredRef = useRef(false);
 
     const activate = useCallback(() => {
+        if (disabled) return;
         onActivate();
-    }, [onActivate]);
+    }, [onActivate, disabled]);
 
     useEffect(() => {
+        if (disabled) {
+            setProgress(0);
+            startTimeRef.current = null;
+            triggeredRef.current = false;
+            setCenter(null);
+            return;
+        }
+
         const x = gaze?.x;
         const y = gaze?.y;
 
@@ -81,7 +92,7 @@ export default function GazeDwellButton({
             setProgress(0);
             setCenter(null);
         }
-    }, [gaze?.x, gaze?.y, dwellMs, activate]);
+    }, [gaze?.x, gaze?.y, dwellMs, activate, disabled]);
 
     return (
         <>
@@ -92,8 +103,9 @@ export default function GazeDwellButton({
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    cursor: "pointer",
+                    cursor: disabled ? "not-allowed" : "pointer",
                     userSelect: "none",
+                    opacity: disabled ? 0.7 : 1,
                     ...style,
                 }}
                 onClick={activate} // mouse fallback

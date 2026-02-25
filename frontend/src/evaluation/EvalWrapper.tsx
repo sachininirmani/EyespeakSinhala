@@ -19,13 +19,13 @@ import DwellSliderSingle from "../components/DwellSliderSingle";
 import GlobalGazeIndicator from "../components/GlobalGazeIndicator";
 
 // Interaction config (dwell / hybrid / dwell-free)
-import type {
-    GazeEventType,
-    InteractionConfig,
-    InteractionId,
-    InteractionMapping,
-} from "../interaction/types";
-import {DEFAULT_DWELL, DEFAULT_DWELL_FREE_C, DEFAULT_HYBRID_C} from "../interaction/defaults";
+import type { InteractionConfig, InteractionId } from "../interaction/types";
+import {
+    DEFAULT_DWELL,
+    DEFAULT_DWELL_FREE_C,
+    DEFAULT_HYBRID_C,
+    resolveInteractionById,
+} from "../interaction/defaults";
 
 // Keep this local to avoid coupling EvalWrapper to KeyboardLoader's internal types.
 // Must match your InteractionId union ("dwell" | "dwell_free_c" | "hybrid_c").
@@ -55,22 +55,12 @@ export default function EvalWrapper() {
     const [dwellMain, setDwellMain] = useState(600);
     const [dwellPopup, setDwellPopup] = useState<number | null>(450);
 
-    // Interaction selection + mapping (defaults preserve existing dwell behavior)
+    // Interaction selection (mappings are fixed per mode for this study)
     const [interactionMode, setInteractionMode] =
         useState<KeyboardInteractionMode>("dwell");
-    const [interactionMapping, setInteractionMapping] =
-        useState<InteractionMapping>({
-            // Dwell: mapping is mostly ignored (dwell triggers selection)
-            // Hybrid: toggle_vowel_popup is used
-            // Dwell-free: look at target then gesture triggers the action
-            delete: "DOUBLE_BLINK",
-            space: "BLINK",
-            toggle_vowel_popup: "FLICK_DOWN",
-        });
 
-    // ---------------- Admin Study Configuration (defaults preserve previous behavior) ----------------
+    // ---------------- Admin Study Configuration ----------------
     // These settings define which layouts/interactions/prompts to include for THIS session.
-    // They are configured in the "Study Configuration (admin)" panel below.
     const [promptCount, setPromptCount] = useState<2 | 3 | 4>(3);
 
     // Default for current thesis scope: only top layouts (v2, v4). You can expand later.
@@ -85,14 +75,6 @@ export default function EvalWrapper() {
         "hybrid_c",
         "dwell_free_c",
     ]);
-
-    const [interactionMappingsByMode, setInteractionMappingsByMode] = useState(
-        () => ({
-            dwell: DEFAULT_DWELL.mapping,
-            hybrid_c: DEFAULT_HYBRID_C.mapping,
-            dwell_free_c: DEFAULT_DWELL_FREE_C.mapping,
-        })
-    );
 
     // Computed condition order for the running session (layout × interaction)
     const [conditionInteractions, setConditionInteractions] = useState<InteractionId[]>([]);
@@ -164,6 +146,12 @@ export default function EvalWrapper() {
         return promptIndex === 1 ? "m" : "s";
     }, [promptIndex, promptCount]);
 
+    const interactionConfig: InteractionConfig = useMemo(() => {
+        // fixed mappings per mode for this study
+        return resolveInteractionById(interactionMode) as any;
+    }, [interactionMode]);
+
+    const interactionMapping = interactionConfig.mapping;
 
     // Start session
 
@@ -197,11 +185,10 @@ export default function EvalWrapper() {
 
         // Determine first interaction mode
         const firstMode = interactionOrder[0] ?? "dwell";
-        const firstMapping = interactionMappingsByMode[firstMode] ?? {};
+        const firstConfig = resolveInteractionById(firstMode);
 
         // Set React state
         setInteractionMode(firstMode);
-        setInteractionMapping(firstMapping);
 
         setPhasePrompts(null);
         promptsFetchedRef.current = false;
@@ -216,7 +203,7 @@ export default function EvalWrapper() {
             familiarity, // Sinhala keyboard usage frequency
             wearsSpecks, // now constant "NA"
             firstMode,
-            firstMapping
+            (firstConfig?.mapping ?? {}) as any
         );
         setSession(s);
         setPhase("biascalibration");
@@ -297,7 +284,7 @@ export default function EvalWrapper() {
                 vowel_popup_close_clicks: live.vowel_popup_close_clicks,
                 keyboard_size: keyboardSizePreset,
 
-                // NEW: interaction details (saved later in DB)
+                // interaction details
                 interaction_id: interactionConfig.id,
                 interaction_label: interactionConfig.label,
                 interaction_mapping: interactionConfig.mapping,
@@ -331,7 +318,6 @@ export default function EvalWrapper() {
             // Keep interaction in sync with condition order
             const nextMode = conditionInteractions[nextIndex] ?? interactionMode;
             setInteractionMode(nextMode);
-            setInteractionMapping(interactionMappingsByMode[nextMode] ?? {});
 
             setDwellMain(600);
             setDwellPopup(450);
@@ -368,7 +354,6 @@ export default function EvalWrapper() {
 
     const isDwellFree = interactionMode === "dwell_free_c";
     const isHybrid = interactionMode === "hybrid_c";
-    const isDwell = interactionMode === "dwell";
 
     const interactionLabel = useMemo(() => {
         if (interactionMode === "dwell") return "Dwell";
@@ -376,29 +361,7 @@ export default function EvalWrapper() {
         return "Dwell-free";
     }, [interactionMode]);
 
-    const ALL_GAZE_EVENTS: GazeEventType[] = useMemo(
-        () => [
-            "FLICK_RIGHT",
-            "FLICK_LEFT",
-            "FLICK_DOWN",
-            "BLINK",
-            "DOUBLE_BLINK",
-            "WINK_LEFT",
-            "WINK_RIGHT",
-        ],
-        []
-    );
-
-    const updateMapping = (k: keyof InteractionMapping, v: GazeEventType) => {
-        setInteractionMapping((m) => ({ ...m, [k]: v }));
-    };
-
     const interactionInstructions = useMemo(() => {
-        const select = interactionMapping.select ?? "FLICK_DOWN";
-        const del = interactionMapping.delete ?? "DOUBLE_BLINK";
-        const space = interactionMapping.space ?? "BLINK";
-        const toggle = interactionMapping.toggle_vowel_popup ?? "FLICK_DOWN";
-
         if (interactionMode === "dwell") {
             return [
                 "Dwell mode: just look at a key until it activates.",
@@ -409,30 +372,22 @@ export default function EvalWrapper() {
         if (interactionMode === "hybrid_c") {
             return [
                 "Hybrid mode: typing is still by dwell.",
-                `Vowel popup toggle: look at the consonant then do ${toggle}.`,
-                `Space: ${space}.`,
-                `Delete: ${del}.`,
+                "Open vowel popup: look at a consonant then flick DOWN.",
+                "Select a vowel in popup: dwell on the popup option.",
+                "Space: intended blink.",
+                "Delete: look at the far-right 10% of the screen (keyboard band) to delete.",
             ];
         }
 
         return [
-            "Dwell-free mode: look at the target to lock key.",
-            `Select key / suggestion / control: ${select}.`,
-            `Vowel popup toggle: look at the consonant then do ${toggle}.`,
-            "Select keys in popup using blink",
-            `Space: ${space}.`,
-            `Delete: ${del}.`,
+            "Dwell-free mode: look at a key to lock it.",
+            "Confirm locked key: corner confirmation.",
+            "Open vowel popup: look at a consonant then flick DOWN.",
+            "In vowel popup: look at an option to lock it, then flick LEFT or RIGHT to confirm.",
+            "Space: intended blink.",
+            "Delete: look at the far-right 10% of the screen (keyboard band) to delete.",
         ];
-    }, [interactionMode, interactionMapping]);
-
-    const interactionConfig: InteractionConfig = useMemo(() => {
-        const id: InteractionId = interactionMode;
-        return {
-            id,
-            label: interactionLabel,
-            mapping: interactionMapping,
-        } as any;
-    }, [interactionMode, interactionLabel, interactionMapping]);
+    }, [interactionMode]);
 
     return (
         <div
@@ -525,7 +480,6 @@ export default function EvalWrapper() {
                         </div>
                     </div>
 
-
                     <StudyConfigPanel
                         promptCount={promptCount}
                         setPromptCount={setPromptCount}
@@ -533,8 +487,6 @@ export default function EvalWrapper() {
                         setSelectedLayouts={setSelectedLayouts}
                         selectedInteractions={selectedInteractions}
                         setSelectedInteractions={setSelectedInteractions}
-                        interactionMappingsByMode={interactionMappingsByMode}
-                        setInteractionMappingsByMode={setInteractionMappingsByMode}
                     />
 
                     <div style={{ marginTop: 12 }}>
@@ -659,8 +611,6 @@ export default function EvalWrapper() {
                             />
                         )
                     ) : null}
-
-
 
                     {isDwellFree && (
                         <div style={{ marginTop: 8, color: "#0f766e", fontSize: 14 }}>
@@ -805,35 +755,58 @@ export default function EvalWrapper() {
                     />
 
                     <div style={{ marginTop: 16, alignSelf: "center" }}>
-                        <button
-                            onClick={finishRound}
-                            disabled={submittingRef.current}
-                            title={submittingRef.current ? "Saving…" : "Submit this answer"}
-                            style={{
-                                backgroundColor: submittingRef.current ? "#fca5a5cc" : "#fca5a5",
-                                color: "#fff",
-                                border: "none",
-                                borderRadius: 10,
-                                padding: "16px 60px",
-                                fontSize: 20,
-                                fontWeight: 600,
-                                cursor: submittingRef.current ? "not-allowed" : "pointer",
-                                transition: "background-color 0.3s ease, transform 0.2s ease",
-                                width: 260,
-                                textAlign: "center",
-                                boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                            }}
-                            onMouseEnter={(e) => {
-                                if (!submittingRef.current)
-                                    (e.target as HTMLButtonElement).style.backgroundColor = "#f87171";
-                            }}
-                            onMouseLeave={(e) => {
-                                if (!submittingRef.current)
-                                    (e.target as HTMLButtonElement).style.backgroundColor = "#fca5a5";
-                            }}
-                        >
-                            {submittingRef.current ? "Saving…" : "Submit"}
-                        </button>
+                        {isDwellFree ? (
+                            <GazeDwellButton
+                                onActivate={finishRound}
+                                dwellMs={900}
+                                disabled={submittingRef.current}
+                                style={{
+                                    backgroundColor: submittingRef.current ? "#fca5a5cc" : "#fca5a5",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: 10,
+                                    padding: "16px 60px",
+                                    fontSize: 20,
+                                    fontWeight: 600,
+                                    transition: "background-color 0.3s ease, transform 0.2s ease",
+                                    width: 260,
+                                    textAlign: "center",
+                                    boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                                }}
+                            >
+                                {submittingRef.current ? "Saving…" : "Submit"}
+                            </GazeDwellButton>
+                        ) : (
+                            <button
+                                onClick={finishRound}
+                                disabled={submittingRef.current}
+                                title={submittingRef.current ? "Saving…" : "Submit this answer"}
+                                style={{
+                                    backgroundColor: submittingRef.current ? "#fca5a5cc" : "#fca5a5",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: 10,
+                                    padding: "16px 60px",
+                                    fontSize: 20,
+                                    fontWeight: 600,
+                                    cursor: submittingRef.current ? "not-allowed" : "pointer",
+                                    transition: "background-color 0.3s ease, transform 0.2s ease",
+                                    width: 260,
+                                    textAlign: "center",
+                                    boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!submittingRef.current)
+                                        (e.target as HTMLButtonElement).style.backgroundColor = "#f87171";
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!submittingRef.current)
+                                        (e.target as HTMLButtonElement).style.backgroundColor = "#fca5a5";
+                                }}
+                            >
+                                {submittingRef.current ? "Saving…" : "Submit"}
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

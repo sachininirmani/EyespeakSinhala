@@ -37,8 +37,8 @@ export function useKeyCornerConfirm(opts: Options) {
         confirmHoldMs = 160,
         unlockGraceMs = 160,
         cornerFrac = 0.35,
-        cornerMinPx = 40,
-        cornerMaxPx = 48,
+        cornerMinPx = 45,
+        cornerMaxPx = 55,
     } = opts;
 
     const [overlay, setOverlay] = useState<{ left: number; top: number; size: number; visible: boolean } | null>(null);
@@ -86,7 +86,6 @@ export function useKeyCornerConfirm(opts: Options) {
         if (px < corner.left || px > corner.left + corner.size) return false;
         if (py < corner.top || py > corner.top + corner.size) return false;
 
-        // top-right triangle: (sx,sy) where sy <= sx
         const sx = px - corner.left;
         const sy = py - corner.top;
         return sy <= sx;
@@ -97,6 +96,7 @@ export function useKeyCornerConfirm(opts: Options) {
             lockedRef.current = null;
             candidateRef.current = null;
             confirmEnterAtRef.current = 0;
+            lastConfirmedRef.current = null; // 🔹 reset
             setOverlay(null);
             return;
         }
@@ -105,20 +105,17 @@ export function useKeyCornerConfirm(opts: Options) {
         const el = document.elementFromPoint(gaze.x, gaze.y);
         const btn = isEligibleButton(el) ? (el as HTMLElement) : null;
 
-        // Prevent re-trigger while still gazing the same element after a confirm.
-        // User must move gaze away (to a different eligible target or none) before confirming again.
+        // 🔹 Prevent re-trigger while still gazing the same element after confirm.
         if (lastConfirmedRef.current) {
             if (btn !== lastConfirmedRef.current) {
-                lastConfirmedRef.current = null;
+                lastConfirmedRef.current = null; // reset only after gaze leaves
             } else {
-                return;
+                return; // block re-locking same button
             }
         }
 
-
         const locked = lockedRef.current;
 
-        // LOCKED state: handle confirm + unlock
         if (locked) {
             const corner = overlay && overlay.visible ? overlay : null;
 
@@ -131,12 +128,19 @@ export function useKeyCornerConfirm(opts: Options) {
 
             if (corner && insideCorner) {
                 if (confirmEnterAtRef.current === 0) confirmEnterAtRef.current = now;
+
                 if (now - confirmEnterAtRef.current >= confirmHoldMs) {
                     const confirmed = lockedRef.current;
+
                     lockedRef.current = null;
                     confirmEnterAtRef.current = 0;
                     setOverlay(null);
-                    if (confirmed) onConfirm(confirmed);
+
+                    if (confirmed) {
+                        lastConfirmedRef.current = confirmed; // 🔹 critical fix
+                        onConfirm(confirmed);
+                    }
+
                     return;
                 }
             } else {

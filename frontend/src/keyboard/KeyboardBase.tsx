@@ -232,32 +232,20 @@ export default function KeyboardBase({
     const isHybrid = interactionId === "hybrid_c";
     const isDwellFree = interactionId === "dwell_free_c";
 
+    // Fixed mappings for this study (no user-configurable mappings).
+    // NOTE: Composite/chord gestures removed for reliability.
     const resolvedMapping = useMemo<InteractionMapping>(() => {
         const m = interactionMappingResolved ?? {};
 
         return {
             // Dwell-free default: CORNER_CONFIRM (two-phase)
-            select: isDwellFree
-                ? (m.select ?? "CORNER_CONFIRM")
-                : m.select,
+            select: isDwellFree ? (m.select ?? "CORNER_CONFIRM") : m.select,
 
-            // Action bindings
-            space: m.space ?? "BLINK_INTENT",
-            delete: m.delete ?? "CHORD:FLICK_RIGHT+FLICK_DOWN",
+            // Space is intended blink
+            space: "BLINK_INTENT",
 
-            // Popup control
-            open_vowel_popup:
-                m.open_vowel_popup ??
-                (isHybrid || isDwellFree ? "FLICK_DOWN" : undefined),
-
-            close_vowel_popup:
-                m.close_vowel_popup ??
-                (isHybrid || isDwellFree
-                    ? "CHORD:FLICK_DOWN+BLINK_INTENT"
-                    : undefined),
-
-            // Backward compatibility (only if explicitly used)
-            toggle_vowel_popup: m.toggle_vowel_popup,
+            // Popup open is explicit in hybrid + dwell-free
+            open_vowel_popup: isHybrid || isDwellFree ? "FLICK_DOWN" : m.open_vowel_popup,
         };
     }, [interactionMappingResolved, isDwellFree, isHybrid]);
 
@@ -335,7 +323,7 @@ export default function KeyboardBase({
 
     // Dwell-free 2-phase select: lock key then confirm via corner triangle.
     const cornerConfirm = useKeyCornerConfirm({
-        enabled: isDwellFree && resolvedMapping.select === "CORNER_CONFIRM",
+        enabled: isDwellFree,
         gaze,
         containerRef,
         eligibleRootRef: resizeContainerRef,
@@ -348,7 +336,7 @@ export default function KeyboardBase({
         },
     });
 
-    // Dwell-free popup lock (blink-confirm) tracking.
+    // Dwell-free popup lock (flick-confirm) tracking.
     useEffect(() => {
         if (!isDwellFree) return;
         if (!vowelPopup) {
@@ -433,6 +421,53 @@ export default function KeyboardBase({
         lastGazeRef.current = { x: gazeData.x, y: gazeData.y };
         setGaze(gazeData);
     }, [gazeData]);
+
+    // Delete via far-right 10% of screen:
+    // - Hybrid + Dwell-free only
+    // - Trigger when gaze stays in the right-most 10% of the viewport
+    // - Constrained to keyboard vertical band to reduce accidental triggers
+    // - Includes cooldown to prevent repeats
+    useEffect(() => {
+        if (!isHybrid && !isDwellFree) return;
+        if (showBias) return;
+        if (!gaze.x && !gaze.y) return;
+
+        const now = performance.now();
+        if (now < deleteZoneCooldownUntilRef.current) return;
+
+        const root = resizeContainerRef.current;
+        if (!root) return;
+
+        const rect = root.getBoundingClientRect();
+        const vw = typeof window !== "undefined" ? window.innerWidth : rect.right;
+
+        const inRightTenPercent = gaze.x > vw * 0.97;
+        const padY = 40;
+        const inKeyboardBand = gaze.y >= rect.top - padY && gaze.y <= rect.bottom + padY;
+        const inDeleteZone = inRightTenPercent && inKeyboardBand;
+
+        if (!inDeleteZone) {
+            deleteZoneSinceRef.current = 0;
+            deleteZoneArmedRef.current = false;
+            return;
+        }
+
+        if (deleteZoneSinceRef.current === 0) {
+            deleteZoneSinceRef.current = now;
+            return;
+        }
+
+        const heldMs = now - deleteZoneSinceRef.current;
+        if (heldMs >= 260 && !deleteZoneArmedRef.current) {
+            deleteZoneArmedRef.current = true;
+            handleDeleteAction();
+            deleteZoneCooldownUntilRef.current = now + 700;
+            deleteZoneSinceRef.current = 0;
+            // small shared cooldown also helps suppress accidental double triggers
+            gestureCooldownUntilRef.current = Math.max(gestureCooldownUntilRef.current, now + 220);
+        }
+    }, [gaze.x, gaze.y, isHybrid, isDwellFree, showBias]);
+
 
     // ---------------- Dwell Hook (disabled in dwell-free) ----------------
     // In dwell-free: we set dwellMs huge so it never auto-triggers.
@@ -652,16 +687,15 @@ export default function KeyboardBase({
             if (layout.hasVowelPopup) {
                 const words = next.trim().split(" ");
                 const lastPrefix = words.length ? words[words.length - 1] : "";
-                // In HYBRID we should arm popup (open only if toggle gesture is used),
-                // but your correction flow expects popup reopening to help fix immediately.
-                // So: open immediately in DWELL + DWELL_FREE; in HYBRID we respect model by arming.
+                // In this study, popup opens by gesture (FLICK_DOWN) in both HYBRID and DWELL_FREE.
+                // For correction flow, we only auto-open in DWELL.
                 fetchVowelPredictions(
                     lastPrefix,
                     base,
                     null,
                     pos,
                     undefined,
-                    !isHybrid // open immediately unless HYBRID
+                    isDwell // open immediately only in DWELL
                 );
             }
 
@@ -771,9 +805,9 @@ export default function KeyboardBase({
         const isVowelRowKeyNow = isV234FirstSetActiveNow && rowIdx === getCurrentLayout().length - 1;
 
         if (layout.hasVowelPopup) {
-            // DWELL + DWELL_FREE: open immediately
-            // HYBRID: arm only, open via gesture toggle
-            const openImmediately = !isHybrid;
+            // DWELL: open immediately
+            // HYBRID + DWELL_FREE: arm only, open via gesture (FLICK_DOWN)
+            const openImmediately = isDwell;
             await fetchVowelPredictions(
                 lastPrefix,
                 chosen,
@@ -855,6 +889,13 @@ export default function KeyboardBase({
     // ---------------- Gesture router (HYBRID + DWELL_FREE) ----------------
     const gestureCooldownUntilRef = useRef<number>(0);
 
+    // Delete via far-right 10% of screen (study rule):
+    // If gaze stays in the right-most 10% of the viewport for a short time, trigger delete once.
+    const deleteZoneSinceRef = useRef<number>(0);
+    const deleteZoneArmedRef = useRef<boolean>(false);
+    const deleteZoneCooldownUntilRef = useRef<number>(0);
+
+
     const closeVowelPopup = () => {
         if (!layout.hasVowelPopup) return;
         if (!vowelPopup) return;
@@ -892,82 +933,60 @@ export default function KeyboardBase({
         }
     };
 
-    const toggleVowelPopup = () => {
-        if (vowelPopup) closeVowelPopup();
-        else openVowelPopup();
-    };
-
+    // NOTE: Popup close is via the close button (no gesture-based close in this study).
 
     useGazeEvents((ev: GazeEventType) => {
         if (showBias) return;
+
+        // If we cooldown on BLINK, BLINK_INTENT arrives immediately after and gets dropped.
+        if (ev === "BLINK") return;
 
         const now = performance.now();
         if (now < gestureCooldownUntilRef.current) return;
         gestureCooldownUntilRef.current = now + 220;
 
-        // HYBRID: popup control by mapping (open/close preferred; toggle kept for backward compatibility)
-        if (isHybrid) {
-            if (resolvedMapping.open_vowel_popup && ev === resolvedMapping.open_vowel_popup) {
-                openVowelPopup();
-                return;
-            }
-            if (resolvedMapping.close_vowel_popup && ev === resolvedMapping.close_vowel_popup) {
-                closeVowelPopup();
-                return;
-            }
-            if (resolvedMapping.toggle_vowel_popup && ev === resolvedMapping.toggle_vowel_popup) {
-                toggleVowelPopup();
-                return;
-            }
+        // ---------------- Popup open (Hybrid + Dwell-free) ----------------
+        // For this study: popup is NOT automatic in dwell-free.
+        // It opens only when the user performs FLICK_DOWN on a consonant.
+        if ((isHybrid || isDwellFree) && ev === "FLICK_DOWN") {
+            // Only open (do not toggle/close via gesture to avoid accidental closes)
+            if (!vowelPopup) openVowelPopup();
             return;
         }
 
-        // DWELL_FREE: select/delete/space by mapping
-        if (isDwellFree) {
-
-            // Popup blink-confirm (dwell-free): lock a popup option by short fixation, confirm via BLINK_INTENT.
-            if (
-                vowelPopup &&
-                popupLockedGestureId &&
-                (ev === "BLINK_INTENT" || ev === "BLINK")
-            ) {
-                // one activation per gaze entry on the same popup target
-                if (popupLastConfirmedIdRef.current !== popupLockedGestureId) {
-                    const el = popupLockedElRef.current;
-                    popupLastConfirmedIdRef.current = popupLockedGestureId;
-                    try {
-                        (el as any)?.click?.();
-                    } catch {
-                        // ignore
-                    }
+        // ---------------- Dwell-free: popup selection confirm ----------------
+        // In popup: look at an option to lock it (short fixation), then flick LEFT/RIGHT to confirm.
+        if (
+            isDwellFree &&
+            vowelPopup &&
+            popupLockedGestureId &&
+            (ev === "FLICK_LEFT" || ev === "FLICK_RIGHT")
+        ) {
+            // One activation per gaze entry on the same popup target
+            if (popupLastConfirmedIdRef.current !== popupLockedGestureId) {
+                const el = popupLockedElRef.current;
+                popupLastConfirmedIdRef.current = popupLockedGestureId;
+                try {
+                    (el as any)?.click?.();
+                } catch {
+                    // ignore
                 }
-                return;
             }
-
-            // Handle select only if it is NOT CORNER_CONFIRM
-            // (CORNER_CONFIRM is gaze-based via useKeyCornerConfirm, not event-based)
-            if (
-                resolvedMapping.select &&
-                resolvedMapping.select !== "CORNER_CONFIRM" &&
-                ev === resolvedMapping.select
-            ) {
-                clickAtGaze();
-                return;
-            }
-
-            if (resolvedMapping.delete && ev === resolvedMapping.delete) {
-                handleDeleteAction();
-                return;
-            }
-
-            if (resolvedMapping.space && ev === resolvedMapping.space) {
-                handleSpaceAction();
-                return;
-            }
-
             return;
         }
 
+        // ---------------- Space (Hybrid + Dwell-free) ----------------
+        // Space is intended blink. To avoid conflicts while looking inside the popup,
+        // we ignore blink->space when popup is open.
+        if ((isHybrid || isDwellFree) && !vowelPopup && ev === "BLINK_INTENT") {
+            handleSpaceAction();
+            return;
+        }
+
+        // ---------------- Dwell-free: other mapped select/delete are not event-based in this study ----------------
+        // - Main selection uses CORNER_CONFIRM (handled by useKeyCornerConfirm).
+        // - Delete uses far-right outside-zone (handled by gaze position watcher below).
+        // - Popup close uses the close button.
         // DWELL: ignore gestures entirely
     });
 
@@ -1016,10 +1035,10 @@ export default function KeyboardBase({
                 return;
             }
 
-            // Popup toggle (hybrid / dwell-free testing): "P" (or "O") toggles popup
+            // Popup open (hybrid / dwell-free testing): "P" (or "O") opens popup
             if (e.code === "KeyP" || e.code === "KeyO") {
                 e.preventDefault();
-                toggleVowelPopup();
+                if (!vowelPopup) openVowelPopup();
                 return;
             }
 
@@ -1040,7 +1059,6 @@ export default function KeyboardBase({
         isDwellFree,
         handleSpaceAction,
         handleDeleteAction,
-        toggleVowelPopup,
         clickAtGaze,
     ]);
 
