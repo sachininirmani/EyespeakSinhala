@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { ALL_KEYBOARDS, LayoutId } from "../keyboard";
-import type { GazeEventType, InteractionId, InteractionMapping } from "../interaction/types";
+import type { GazeEventType, GestureBinding, InteractionId, InteractionMapping } from "../interaction/types";
 
 type Props = {
     promptCount: 2 | 3 | 4;
@@ -20,8 +20,18 @@ type Props = {
     ) => void;
 };
 
-const ALL_GESTURES: GazeEventType[] = [
+const ALL_BINDINGS: GestureBinding[] = [
+    // Gaze-only confirm (dwell-free)
+    "CORNER_CONFIRM",
+
+    // Safer chord options (rare accidental triggers)
+    "CHORD:FLICK_LEFT+FLICK_DOWN",
+    "CHORD:FLICK_RIGHT+FLICK_DOWN",
+    "CHORD:FLICK_DOWN+FLICK_DOWN",
+
+    // Single-event options (available but can be accident-prone for delete/space)
     "BLINK",
+    "BLINK_INTENT",
     "DOUBLE_BLINK",
     "WINK_LEFT",
     "WINK_RIGHT",
@@ -30,7 +40,7 @@ const ALL_GESTURES: GazeEventType[] = [
     "FLICK_RIGHT",
 ] as any;
 
-function isOptionUsedElsewhere(mapping: InteractionMapping, key: keyof InteractionMapping, option: GazeEventType) {
+function isOptionUsedElsewhere(mapping: InteractionMapping, key: keyof InteractionMapping, option: GestureBinding) {
     return Object.entries(mapping).some(([k, v]) => k !== key && v === option);
 }
 
@@ -138,7 +148,7 @@ export default function StudyConfigPanel({
 
                             return (
                                 <>
-                                    {(["toggle_vowel_popup", "delete", "space"] as (keyof InteractionMapping)[]).map(
+                                    {(["open_vowel_popup", "close_vowel_popup", "toggle_vowel_popup", "delete", "space"] as (keyof InteractionMapping)[]).map(
                                         (k) => (
                                             <div
                                                 key={String(k)}
@@ -152,7 +162,7 @@ export default function StudyConfigPanel({
                                                         updateMapping("hybrid_c", { [k]: e.target.value as any })
                                                     }
                                                 >
-                                                    {ALL_GESTURES.map((g) => (
+                                                    {ALL_BINDINGS.map((g) => (
                                                         <option
                                                             key={g}
                                                             value={g}
@@ -178,7 +188,7 @@ export default function StudyConfigPanel({
 
                             return (
                                 <>
-                                    {(["select", "delete", "space", "toggle_vowel_popup"] as (keyof InteractionMapping)[]).map(
+                                    {(["select", "delete", "space", "open_vowel_popup", "close_vowel_popup", "toggle_vowel_popup"] as (keyof InteractionMapping)[]).map(
                                         (k) => (
                                             <div
                                                 key={String(k)}
@@ -189,17 +199,21 @@ export default function StudyConfigPanel({
                                                     disabled={disabled}
                                                     value={
                                                         (m[k] as any) ??
-                                                        (k === "select" || k === "toggle_vowel_popup"
-                                                            ? "FLICK_DOWN"
-                                                            : k === "space"
-                                                                ? "BLINK"
-                                                                : "DOUBLE_BLINK")
+                                                        (k === "select"
+                                                            ? "CORNER_CONFIRM"
+                                                            : k === "open_vowel_popup" || k === "toggle_vowel_popup"
+                                                                ? "FLICK_DOWN"
+                                                                : k === "close_vowel_popup"
+                                                                    ? "CHORD:FLICK_RIGHT+FLICK_DOWN"
+                                                                    : k === "space"
+                                                                        ? "BLINK"
+                                                                        : "DOUBLE_BLINK")
                                                     }
                                                     onChange={(e) =>
                                                         updateMapping("dwell_free_c", { [k]: e.target.value as any })
                                                     }
                                                 >
-                                                    {ALL_GESTURES.map((g) => (
+                                                    {ALL_BINDINGS.map((g) => (
                                                         <option
                                                             key={g}
                                                             value={g}

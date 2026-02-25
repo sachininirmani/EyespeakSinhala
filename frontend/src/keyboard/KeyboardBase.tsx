@@ -13,6 +13,10 @@ import type {
     InteractionMapping,
 } from "../interaction/types";
 
+import { useGestureRouter } from "../interaction/useGestureRouter";
+import { isCornerConfirm } from "../interaction/gestureBindings";
+import { useKeyCornerConfirm } from "../interaction/useKeyCornerConfirm";
+
 /** Number & punctuation overlays (unchanged) */
 const numbers = [
     ["1", "2", "3", "4", "5", "6"],
@@ -738,15 +742,18 @@ export default function KeyboardBase({
         el?.click();
     };
 
-    const toggleVowelPopup = () => {
+    const closeVowelPopup = () => {
+        if (!layout.hasVowelPopup) return;
+        if (!vowelPopup) return;
+        setVowelPopup(null);
+        setV234VowelRowMode("hidden");
+    };
+
+    const openVowelPopup = () => {
         if (!layout.hasVowelPopup) return;
 
-        // If open => close
-        if (vowelPopup) {
-            setVowelPopup(null);
-            setV234VowelRowMode("hidden");
-            return;
-        }
+        // Open-only to prevent accidental "open then immediately close" due to event jitter
+        if (vowelPopup) return;
 
         // If armed => open
         if (pendingVowelPopup) {
@@ -767,37 +774,64 @@ export default function KeyboardBase({
         }
     };
 
+    const toggleVowelPopup = () => {
+        if (!layout.hasVowelPopup) return;
+        if (vowelPopup) closeVowelPopup();
+        else openVowelPopup();
+    };;
+
+    const gestureRouter = useGestureRouter(
+        resolvedMapping,
+        {
+            onSelect: () => {
+                // If selection is CORNER_CONFIRM, it is handled by useKeyCornerConfirm.
+                if (isCornerConfirm(resolvedMapping.select as any)) return;
+                if (isDwellFree) {
+                    clickAtGaze();
+                }
+            },
+            onDelete: () => {
+                if (isHybrid || isDwellFree) handleDeleteAction();
+            },
+            onSpace: () => {
+                if (isHybrid || isDwellFree) handleSpaceAction();
+            },
+            onPopupOpen: () => {
+                if (isHybrid || isDwellFree) openVowelPopup();
+            },
+            onPopupClose: () => {
+                if (isHybrid || isDwellFree) closeVowelPopup();
+            },
+            onPopupToggle: () => {
+                if (isHybrid || isDwellFree) toggleVowelPopup();
+            },
+        },
+        { cooldownMs: 220, cooldownUntilRef: gestureCooldownUntilRef }
+    );
+
     useGazeEvents((ev: GazeEventType) => {
         if (showBias) return;
 
-        const now = performance.now();
-        if (now < gestureCooldownUntilRef.current) return;
-        gestureCooldownUntilRef.current = now + 220;
+        // DWELL: ignore gestures entirely (dwell-based stays unchanged)
+        if (isDwell) return;
 
-        // HYBRID: ONLY toggle popup
-        if (isHybrid) {
-            if (ev === resolvedMapping.toggle_vowel_popup) toggleVowelPopup();
-            return;
-        }
+        // HYBRID + DWELL_FREE: route mapped gestures
+        gestureRouter.onEvent(ev);
+    });
 
-        // DWELL_FREE: select/delete/space by mapping
-        if (isDwellFree) {
-            if (ev === resolvedMapping.select) {
+    // Dwell-free only: two-phase lock + corner confirm (no dwell selection).
+    const cornerConfirm = useKeyCornerConfirm({
+        enabled: isDwellFree && isCornerConfirm(resolvedMapping.select as any),
+        gaze,
+        containerRef,
+        eligibleRootRef: resizeContainerRef as any,
+        onConfirm: (el) => {
+            try {
+                (el as any).click?.();
+            } catch {
                 clickAtGaze();
-                return;
             }
-            if (ev === resolvedMapping.delete) {
-                handleDeleteAction();
-                return;
-            }
-            if (ev === resolvedMapping.space) {
-                handleSpaceAction();
-                return;
-            }
-            return;
-        }
-
-        // DWELL: ignore gestures entirely
+        },
     });
 
 
@@ -1250,6 +1284,19 @@ export default function KeyboardBase({
             )}
 
             {showBias && <BiasTuner onClose={() => setShowBias(false)} />}
+
+            {cornerConfirm?.showCorner && cornerConfirm.overlayStyle && (
+                <div style={cornerConfirm.overlayStyle as any}>
+                    <div
+                        style={{
+                            width: 0,
+                            height: 0,
+                            borderTop: `${cornerConfirm.cornerSize}px solid rgba(59,130,246,0.35)`,
+                            borderLeft: `${cornerConfirm.cornerSize}px solid transparent`,
+                        }}
+                    />
+                </div>
+            )}
 
             <GazeIndicator
                 x={gaze.x}

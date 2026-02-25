@@ -1,6 +1,6 @@
 // src/interaction/defaults.ts
 
-import type { InteractionConfig, GazeEventType, InteractionId } from "./types";
+import type { InteractionConfig, GestureBinding, GazeEventType } from "./types";
 
 /**
  * Canonical interaction IDs.
@@ -24,9 +24,19 @@ export const DEFAULT_DWELL_FREE_C: InteractionConfig = {
     id: "dwell_free_c",
     label: "Dwell-Free (Model C)",
     mapping: {
-        select: "FLICK_DOWN",
-        delete: "DOUBLE_BLINK",
-        space: "BLINK",
+        // Two-phase dwell-free: lock key by short fixation, confirm via corner hotspot.
+        // Users can override this in StudyConfigPanel if they want a gesture-confirm.
+        select: "CORNER_CONFIRM" as GestureBinding,
+
+        // Safer defaults avoid accidental deletes during natural horizontal scanning
+        delete: "CHORD:FLICK_RIGHT+FLICK_DOWN" as GestureBinding,
+
+        // If wrapper blink is improved, BLINK_INTENT is ideal; BLINK kept for backward compatibility
+        space: "BLINK_INTENT" as GestureBinding,
+
+        // Popup open/close split prevents "open then instantly close" due to double firing
+        open_vowel_popup: "FLICK_DOWN" as GestureBinding,
+        close_vowel_popup: "CHORD:FLICK_DOWN+BLINK_INTENT" as GestureBinding,
     },
 };
 
@@ -34,11 +44,15 @@ export const DEFAULT_HYBRID_C: InteractionConfig = {
     id: "hybrid_c",
     label: "Hybrid (Model C)",
     mapping: {
-        // Hybrid uses dwell for selection; only the popup toggle is gesture-driven.
-        toggle_vowel_popup: "FLICK_DOWN",
-        // Optional (kept consistent with EvalWrapper defaults):
-        delete: "DOUBLE_BLINK",
-        space: "BLINK",
+        // Hybrid uses dwell for selection; only popup control is gesture-driven.
+        // Prefer open-only + separate close to avoid accidental toggling.
+        open_vowel_popup: "FLICK_DOWN" as GestureBinding,
+        close_vowel_popup: "CHORD:FLICK_DOWN+BLINK_INTENT" as GestureBinding,
+
+
+        // Optional
+        delete: "CHORD:FLICK_RIGHT+FLICK_DOWN" as GestureBinding,
+        space: "BLINK_INTENT" as GestureBinding,
     },
 };
 

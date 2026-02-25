@@ -124,6 +124,10 @@ export function useGaze() {
                         // Ignore non-gaze frames
                         if (o.type && o.type !== "gaze") return;
 
+                        // Ignore invalid gaze frames (e.g., during blinks). Keep last stable gaze.
+                        if (typeof o.valid === "boolean" && o.valid === false) return;
+                        if (typeof o.presence === "number" && o.presence === 1) return;
+
                         // Accept legacy {x,y} OR {type:"gaze", x,y}
                         if (
                             typeof o.x !== "number" ||

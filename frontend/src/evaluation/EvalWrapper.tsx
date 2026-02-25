@@ -91,16 +91,22 @@ export default function EvalWrapper() {
     >({
         dwell: {},
         hybrid_c: {
+            open_vowel_popup: "FLICK_DOWN",
+            close_vowel_popup: "CHORD:FLICK_DOWN+FLICK_DOWN",
             toggle_vowel_popup: "FLICK_DOWN",
-            delete: "FLICK_RIGHT",
+            delete: "DOUBLE_BLINK",
             space: "BLINK",
         },
         dwell_free_c: {
-            select: "FLICK_LEFT",
-            toggle_vowel_popup: "FLICK_DOWN",
-            delete: "FLICK_RIGHT",
+            // Two-phase dwell-free: lock + corner confirm (can be overridden in StudyConfigPanel)
+            select: "CORNER_CONFIRM",
+            delete: "CHORD:FLICK_LEFT+FLICK_DOWN",
             space: "BLINK",
+
+            open_vowel_popup: "FLICK_DOWN",
+            close_vowel_popup: "CHORD:FLICK_RIGHT+FLICK_DOWN",
         },
+
     });
 
     // Computed condition order for the running session (layout × interaction)
