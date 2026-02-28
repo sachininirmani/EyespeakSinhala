@@ -40,6 +40,17 @@ type LiveMetrics = {
     vowel_popup_close_clicks: number;
 };
 
+/* ---------------------- SIZE PERMUTATIONS ---------------------- */
+/* Practice is always Large. Prompts 1,2,3 use one of these orders */
+const SIZE_PERMUTATIONS: ("s" | "m" | "l")[][] = [
+    ["l", "m", "s"],
+    ["l", "s", "m"],
+    ["m", "l", "s"],
+    ["m", "s", "l"],
+    ["s", "l", "m"],
+    ["s", "m", "l"],
+];
+
 export default function EvalWrapper() {
     // Participant details
     const [participant, setParticipant] = useState("P001");
@@ -59,11 +70,7 @@ export default function EvalWrapper() {
     const [interactionMode, setInteractionMode] =
         useState<KeyboardInteractionMode>("dwell");
 
-    // ---------------- Admin Study Configuration ----------------
-    // These settings define which layouts/interactions/prompts to include for THIS session.
-    const [promptCount, setPromptCount] = useState<2 | 3 | 4>(3);
-
-    // Default for current thesis scope: only top layouts (v2, v4). You can expand later.
+    /* ---------------- Layout / Interaction Selection ---------------- */
     const [selectedLayouts, setSelectedLayouts] = useState<LayoutId[]>([
         "eyespeak_v2" as any,
         "eyespeak_v4" as any,
@@ -79,7 +86,11 @@ export default function EvalWrapper() {
     // Computed condition order for the running session (layout × interaction)
     const [conditionInteractions, setConditionInteractions] = useState<InteractionId[]>([]);
 
-    // State tracking
+    /* ---------------- Session Size Order (NEW) ---------------- */
+    const [sessionSizeOrder, setSessionSizeOrder] =
+        useState<("s" | "m" | "l")[]>(["l", "m", "s"]);
+
+    /* ---------------- Phases ---------------- */
     const [phase, setPhase] = useState<
         | "setup"
         | "biascalibration"
@@ -129,25 +140,18 @@ export default function EvalWrapper() {
     const currentPrompt =
         allPromptsForPhase.length > 0 ? allPromptsForPhase[promptIndex] : "";
 
-    // keyboard size derived per prompt (practice = large)
+    /* ---------------- KEYBOARD SIZE LOGIC (UPDATED) ---------------- */
     const keyboardSizePreset = useMemo<"s" | "m" | "l">(() => {
-        // Footprint sizing rule:
-        // - practice prompt (index 0): Large
-        // - for 4 prompts: first TWO prompts are Large, then Medium -> Small
-        // - for 3 prompts: Large -> Medium -> Small
-        // - for 2 prompts: Large -> Medium
+
+        // Practice prompt always Large
         if (promptIndex === 0) return "l";
-        if (promptCount === 4) {
-            if (promptIndex === 1) return "l";
-            if (promptIndex === 2) return "m";
-            return "s";
-        }
-        if (promptCount === 2) return "m";
-        return promptIndex === 1 ? "m" : "s";
-    }, [promptIndex, promptCount]);
+
+        // Prompts 1,2,3 follow session permutation
+        return sessionSizeOrder[promptIndex - 1] ?? "m";
+
+    }, [promptIndex, sessionSizeOrder]);
 
     const interactionConfig: InteractionConfig = useMemo(() => {
-        // fixed mappings per mode for this study
         return resolveInteractionById(interactionMode) as any;
     }, [interactionMode]);
 
@@ -157,8 +161,15 @@ export default function EvalWrapper() {
 
     // Build condition order (layout × interaction) for this session based on admin configuration.
     function buildConditionPlan(): { layout: LayoutId; interaction: InteractionId }[] {
-        const layoutsSrc = selectedLayouts.length ? selectedLayouts : getRandomizedLayouts();
-        const interactionsSrc = selectedInteractions.length ? selectedInteractions : (["dwell"] as InteractionId[]);
+
+        const layoutsSrc = selectedLayouts.length
+            ? selectedLayouts
+            : getRandomizedLayouts();
+
+        const interactionsSrc = selectedInteractions.length
+            ? selectedInteractions
+            : (["dwell"] as InteractionId[]);
+
         const blocks: { layout: LayoutId; interaction: InteractionId }[] = [];
 
         layoutsSrc.forEach((layout) => {
@@ -175,19 +186,24 @@ export default function EvalWrapper() {
         return blocks;
     }
 
+    /* ---------------- BEGIN SESSION ---------------- */
     async function beginSession() {
+
         const blocks = buildConditionPlan();
         const layoutOrder = blocks.map((b) => b.layout);
         const interactionOrder = blocks.map((b) => b.interaction);
 
+        /* Pick ONE size permutation for whole session */
+        const randomIndex = Math.floor(Math.random() * SIZE_PERMUTATIONS.length);
+        const chosenPermutation = SIZE_PERMUTATIONS[randomIndex];
+        setSessionSizeOrder(chosenPermutation);
+
         setLayouts(layoutOrder);
         setConditionInteractions(interactionOrder);
 
-        // Determine first interaction mode
         const firstMode = interactionOrder[0] ?? "dwell";
         const firstConfig = resolveInteractionById(firstMode);
 
-        // Set React state
         setInteractionMode(firstMode);
 
         setPhasePrompts(null);
@@ -200,25 +216,34 @@ export default function EvalWrapper() {
             layoutOrder,
             participantName,
             participantAge,
-            familiarity, // Sinhala keyboard usage frequency
-            wearsSpecks, // now constant "NA"
+            familiarity,
+            wearsSpecks,
             firstMode,
             (firstConfig?.mapping ?? {}) as any
         );
+
         setSession(s);
         setPhase("biascalibration");
     }
 
-    // Load prompts once per session
+    /* ---------------- PROMPT LOADING (FIXED TO 4) ---------------- */
     useEffect(() => {
+
         if (phase === "familiarize" && !promptsFetchedRef.current) {
+
             getPrompts().then((p) => {
-                setPhasePrompts({ ...(p as any), prompts: (p as any).prompts?.slice(0, promptCount) ?? (p as any).prompts } as any);
+
+                setPhasePrompts({
+                    ...(p as any),
+                    prompts: (p as any).prompts?.slice(0, 4),
+                } as any);
+
                 setPromptIndex(0);
                 promptsFetchedRef.current = true;
             });
         }
-    }, [phase, promptCount]);
+
+    }, [phase]);
 
     function finishBiasCalibration() {
         setPhase("familiarize");
@@ -481,8 +506,6 @@ export default function EvalWrapper() {
                     </div>
 
                     <StudyConfigPanel
-                        promptCount={promptCount}
-                        setPromptCount={setPromptCount}
                         selectedLayouts={selectedLayouts}
                         setSelectedLayouts={setSelectedLayouts}
                         selectedInteractions={selectedInteractions}

@@ -149,7 +149,7 @@ init_db()
 # PROMPTS: ONE UNIFIED POOL
 # ------------------------------------------------------------
 
-PROMPT_COUNT = 3   # <---- change this anytime to pick N prompts per session
+PROMPT_COUNT = 4   # <---- change this anytime to pick N prompts per session
 
 with open(os.path.join(DATA_DIR, "prompts_sinhala.json"), "r", encoding="utf-8") as f:
     PROMPT_POOL = json.load(f)["prompts"]
