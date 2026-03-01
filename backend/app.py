@@ -148,8 +148,8 @@ init_db()
 # ------------------------------------------------------------
 # PROMPTS: ONE UNIFIED POOL
 # ------------------------------------------------------------
-
-PROMPT_COUNT = 4   # <---- change this anytime to pick N prompts per session
+# PROMPT_COUNT = 4
+PROMPT_COUNT = 3   # <---- change this anytime to pick N prompts per session
 
 with open(os.path.join(DATA_DIR, "prompts_sinhala.json"), "r", encoding="utf-8") as f:
     PROMPT_POOL = json.load(f)["prompts"]
@@ -390,7 +390,9 @@ def trial_submit():
         vowel_popup_clicks = None
         vowel_popup_more_clicks = None
         vowel_popup_close_clicks = None
-
+    if interaction_id == "dwell_free_c":
+        dwell_popup_ms = None
+        dwell_main_ms = None
     # ---------------------------
     # TEXT-ENTRY METRICS (STANDARD, MAC-KENZIE STYLE)
     # ---------------------------

@@ -36,9 +36,9 @@ export function useKeyCornerConfirm(opts: Options) {
         lockMs = 150,
         confirmHoldMs = 160,
         unlockGraceMs = 160,
-        cornerFrac = 0.35,
-        cornerMinPx = 45,
-        cornerMaxPx = 55,
+        cornerFrac = 0.5,
+        cornerMinPx = 70,
+        cornerMaxPx = 110,
     } = opts;
 
     const [overlay, setOverlay] = useState<{ left: number; top: number; size: number; visible: boolean } | null>(null);

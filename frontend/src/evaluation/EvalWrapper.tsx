@@ -43,12 +43,13 @@ type LiveMetrics = {
 /* ---------------------- SIZE PERMUTATIONS ---------------------- */
 /* Practice is always Large. Prompts 1,2,3 use one of these orders */
 const SIZE_PERMUTATIONS: ("s" | "m" | "l")[][] = [
-    ["l", "m", "s"],
-    ["l", "s", "m"],
-    ["m", "l", "s"],
-    ["m", "s", "l"],
-    ["s", "l", "m"],
-    ["s", "m", "l"],
+    ["l", "l", "s"],
+    // ["l", "m", "s"],
+    // ["l", "s", "m"],
+    // ["m", "l", "s"],
+    // ["m", "s", "l"],
+    // ["s", "l", "m"],
+    // ["s", "m", "l"],
 ];
 
 export default function EvalWrapper() {
@@ -147,7 +148,7 @@ export default function EvalWrapper() {
         if (promptIndex === 0) return "l";
 
         // Prompts 1,2,3 follow session permutation
-        return sessionSizeOrder[promptIndex - 1] ?? "m";
+        return sessionSizeOrder[promptIndex - 1] ?? "l";
 
     }, [promptIndex, sessionSizeOrder]);
 
